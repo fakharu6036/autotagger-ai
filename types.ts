@@ -1,0 +1,85 @@
+
+export enum ProcessingStatus {
+  PENDING = 'Queued',
+  PROCESSING = 'Analyzing',
+  COMPLETED = 'Completed',
+  ERROR = 'Unavailable',
+}
+
+export enum AIProvider {
+  GEMINI = 'Google Gemini',
+}
+
+export enum GenerationProfile {
+  COMMERCIAL = 'Commercial Lifestyle',
+  EDITORIAL = 'Editorial News',
+  PRODUCT = 'Minimal Product',
+  SCIENTIFIC = 'Medical / Scientific',
+}
+
+export enum PlatformPreset {
+  STANDARD = 'Standard CSV',
+  ADOBE = 'Adobe Stock',
+  SHUTTERSTOCK = 'Shutterstock',
+  GETTY = 'Getty / iStock',
+}
+
+export interface ApiKeyRecord {
+  id: string;
+  key: string;
+  label: string;
+  addedAt: number;
+  // Internal scheduling tracking (Invisible to user)
+  status: 'active' | 'cooldown';
+  cooldownUntil?: number;
+  lastUsedAt?: number;
+  nextAllowedAt?: number;
+}
+
+export interface KeywordScore {
+  word: string;
+  score: 'strong' | 'medium' | 'weak';
+  specificity: number;
+  demand: number;
+  platformFit: number;
+  reason?: string;
+}
+
+export interface ValidationError {
+  type: 'error' | 'warning';
+  message: string;
+  field: keyof Metadata;
+}
+
+export interface Metadata {
+  title: string;
+  description: string;
+  keywords: string[];
+  backupKeywords?: string[]; // New pool of additional suggestions
+  keywordScores?: KeywordScore[];
+  rejectionRisks?: string[];
+  category: string;
+  releases?: string;
+  readinessScore?: number;
+  validationErrors?: ValidationError[];
+}
+
+export interface StyleMemory {
+  rejectedKeywords: string[];
+  preferredTones: string[];
+  lastUsedProfile: GenerationProfile;
+  customProfilePrompts?: Record<GenerationProfile, string>;
+}
+
+export interface FileItem {
+  id: string;
+  file: File;
+  previewUrl: string;
+  status: ProcessingStatus;
+  metadata: Metadata;
+  variantB?: Metadata;
+  error?: string;
+  base64Data?: string;
+  base64Frames?: string[];
+  newFilename?: string;
+}

@@ -364,51 +364,11 @@ Generate comprehensive metadata that maximizes discoverability while maintaining
             lowerMsg.includes('generation_config')
           );
           
-          if (isSchemaError && requestBody.generationConfig?.responseSchema) {
-            // Retry without schema for this model
-            console.warn(`Model ${modelName} doesn't support responseSchema, retrying without schema...`);
-            const retryBody = {
-              contents: [{
-                parts: promptParts
-              }],
-              generationConfig: {
-                responseMimeType: "application/json"
-                // No responseSchema
-              }
-            };
-            
-            try {
-              const retryResponse = await fetch(url.toString(), {
-                method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                },
-                body: JSON.stringify(retryBody)
-              });
-              
-              if (retryResponse.ok) {
-                // Success without schema - parse JSON from text response
-                const retryData = await retryResponse.json();
-                const jsonStr = retryData.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
-                const json = JSON.parse(jsonStr);
-                const keywords = (json.keywordsWithScores || []).map((k: any) => k.word?.toLowerCase().trim() || k.toLowerCase().trim()).filter(Boolean);
-                const backupKeywords = (json.backupKeywords || []).map((k: string) => k.toLowerCase().trim()).filter(Boolean);
-
-                return {
-                  title: json.title || "Untitled Stock Asset",
-                  description: json.description || "",
-                  keywords: keywords.slice(0, 50),
-                  backupKeywords: backupKeywords,
-                  keywordScores: json.keywordsWithScores || [],
-                  rejectionRisks: json.rejectionRisks || [],
-                  category: json.category || "General",
-                  releases: ""
-                };
-              }
-            } catch (retryError) {
-              console.warn('Retry without schema also failed:', retryError);
-              // Continue with normal error handling below
-            }
+          // Note: Schema errors are handled by not using responseSchema in the first place
+          // This check is kept for future compatibility if we add schema support conditionally
+          if (isSchemaError) {
+            console.warn(`Model ${modelName} returned schema-related error. This shouldn't happen as we don't use responseSchema.`);
+            // Continue with normal error handling
           }
           
           // Check for fundamental API issues that will affect all models
@@ -441,8 +401,9 @@ Generate comprehensive metadata that maximizes discoverability while maintaining
           
           // 400 Bad Request - treat as API key issue if it's the first model
           // Most 400 errors from Gemini API are API key related, not model-specific
+          // Exclude schema errors from this check
           const modelIndex = modelsToTry.indexOf(model);
-          if (statusCode === 400) {
+          if (statusCode === 400 && !isSchemaError) {
             // If first model returns 400, assume it's an API key issue and stop
             if (modelIndex === 0) {
               throw new Error(`Invalid API key or request. ${errMsg || 'Please check your API key in Settings and ensure it has access to Gemini models.'}`);
@@ -479,8 +440,20 @@ Generate comprehensive metadata that maximizes discoverability while maintaining
 
         const responseData = await response.json();
         const jsonStr = responseData.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
-        const json = JSON.parse(jsonStr);
-        const keywords = (json.keywordsWithScores || []).map((k: any) => k.word.toLowerCase().trim()).filter(Boolean);
+        
+        let json: any;
+        try {
+          json = JSON.parse(jsonStr);
+        } catch (parseError) {
+          console.error('Failed to parse JSON response:', parseError, jsonStr);
+          throw new Error('Invalid JSON response from API. Please try again.');
+        }
+        
+        const keywords = (json.keywordsWithScores || []).map((k: any) => {
+          // Handle both object format {word: "..."} and string format
+          const word = typeof k === 'string' ? k : (k.word || k);
+          return word?.toLowerCase().trim();
+        }).filter(Boolean);
         const backupKeywords = (json.backupKeywords || []).map((k: string) => k.toLowerCase().trim()).filter(Boolean);
 
         return {

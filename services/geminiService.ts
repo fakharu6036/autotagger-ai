@@ -320,19 +320,22 @@ Generate comprehensive metadata that maximizes discoverability while maintaining
         const url = new URL(`${API_BASE_URL}/models/${modelName}:generateContent`);
         url.searchParams.set('key', trimmedKey);
         
-        // Try with schema first (for models that support structured output)
-        // If it fails, we'll retry without schema
+        // Some models (like gemini-2.5-flash-lite) don't support generationConfig at all
+        // Start with a minimal request and add config only if needed
         let requestBody: any = {
           contents: [{
             parts: promptParts
-          }],
-          generationConfig: {
-            responseMimeType: "application/json"
-          }
+          }]
         };
         
-        // Don't use responseSchema - it's not supported by all models
-        // Instead, rely on the prompt to get JSON response and responseMimeType
+        // Only add generationConfig for models that likely support it
+        // Newer models (2.5, 3.0) may not support responseMimeType
+        // Try without config first, add it only for older models
+        if (!modelName.includes('2.5') && !modelName.includes('3.0') && !modelName.includes('2.0')) {
+          requestBody.generationConfig = {
+            responseMimeType: "application/json"
+          };
+        }
         
         const response = await fetch(url.toString(), {
           method: 'POST',
@@ -354,25 +357,74 @@ Generate comprehensive metadata that maximizes discoverability while maintaining
             fullError: errorData
           });
           
-          // Check if it's a schema-related error - retry without schema
+          // Check if it's a generationConfig-related error - retry without config
           const lowerMsg = errMsg.toLowerCase();
-          const isSchemaError = statusCode === 400 && (
-            lowerMsg.includes('responseschema') ||
-            lowerMsg.includes('response_schema') ||
+          const isConfigError = statusCode === 400 && (
+            lowerMsg.includes('responsemimetype') ||
+            lowerMsg.includes('response_mime_type') ||
+            lowerMsg.includes('generation_config') ||
             lowerMsg.includes('unknown name') ||
-            lowerMsg.includes('cannot find field') ||
-            lowerMsg.includes('generation_config')
+            lowerMsg.includes('cannot find field')
           );
           
-          // Note: Schema errors are handled by not using responseSchema in the first place
-          // This check is kept for future compatibility if we add schema support conditionally
-          if (isSchemaError) {
-            console.warn(`Model ${modelName} returned schema-related error. This shouldn't happen as we don't use responseSchema.`);
-            // Continue with normal error handling
+          if (isConfigError && requestBody.generationConfig) {
+            // Retry without generationConfig for this model
+            console.warn(`Model ${modelName} doesn't support generationConfig, retrying without it...`);
+            const retryBody = {
+              contents: [{
+                parts: promptParts
+              }]
+              // No generationConfig
+            };
+            
+            try {
+              const retryResponse = await fetch(url.toString(), {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(retryBody)
+              });
+              
+              if (retryResponse.ok) {
+                // Success without config - parse JSON from text response
+                const retryData = await retryResponse.json();
+                const jsonStr = retryData.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
+                
+                let json: any;
+                try {
+                  json = JSON.parse(jsonStr);
+                } catch (parseError) {
+                  console.error('Failed to parse JSON response:', parseError, jsonStr);
+                  throw new Error('Invalid JSON response from API. Please try again.');
+                }
+                
+                const keywords = (json.keywordsWithScores || []).map((k: any) => {
+                  // Handle both object format {word: "..."} and string format
+                  const word = typeof k === 'string' ? k : (k.word || k);
+                  return word?.toLowerCase().trim();
+                }).filter(Boolean);
+                const backupKeywords = (json.backupKeywords || []).map((k: string) => k.toLowerCase().trim()).filter(Boolean);
+
+                return {
+                  title: json.title || "Untitled Stock Asset",
+                  description: json.description || "",
+                  keywords: keywords.slice(0, 50),
+                  backupKeywords: backupKeywords,
+                  keywordScores: json.keywordsWithScores || [],
+                  rejectionRisks: json.rejectionRisks || [],
+                  category: json.category || "General",
+                  releases: ""
+                };
+              }
+            } catch (retryError) {
+              console.warn('Retry without generationConfig also failed:', retryError);
+              // Continue with normal error handling below
+            }
           }
           
           // Check for fundamental API issues that will affect all models
-          const isApiKeyIssue = statusCode === 400 && !isSchemaError && (
+          const isApiKeyIssue = statusCode === 400 && !isConfigError && (
             lowerMsg.includes('api key') ||
             lowerMsg.includes('invalid api key') ||
             lowerMsg.includes('api key not valid') ||
@@ -401,9 +453,9 @@ Generate comprehensive metadata that maximizes discoverability while maintaining
           
           // 400 Bad Request - treat as API key issue if it's the first model
           // Most 400 errors from Gemini API are API key related, not model-specific
-          // Exclude schema errors from this check
+          // Exclude config errors from this check
           const modelIndex = modelsToTry.indexOf(model);
-          if (statusCode === 400 && !isSchemaError) {
+          if (statusCode === 400 && !isConfigError) {
             // If first model returns 400, assume it's an API key issue and stop
             if (modelIndex === 0) {
               throw new Error(`Invalid API key or request. ${errMsg || 'Please check your API key in Settings and ensure it has access to Gemini models.'}`);

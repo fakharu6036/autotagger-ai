@@ -276,6 +276,31 @@ export class FileSystemService {
     }
   }
 
+  private parseCsvLine(line: string): string[] {
+    const fields: string[] = [];
+    let currentField = '';
+    let inQuotes = false;
+    
+    for (let i = 0; i < line.length; i++) {
+      const char = line[i];
+      if (char === '"') {
+        if (inQuotes && line[i + 1] === '"') {
+          currentField += '"';
+          i++; // Skip next quote
+        } else {
+          inQuotes = !inQuotes;
+        }
+      } else if (char === ',' && !inQuotes) {
+        fields.push(currentField);
+        currentField = '';
+      } else {
+        currentField += char;
+      }
+    }
+    fields.push(currentField); // Add last field
+    return fields;
+  }
+
   async appendToCsvFile(
     directoryHandle: FileSystemDirectoryHandle,
     csvRow: string,
@@ -284,7 +309,15 @@ export class FileSystemService {
     try {
       let fileHandle: FileSystemFileHandle;
       let existingContent = '';
-      const newFilename = csvRow.split(',')[0].replace(/^"|"$/g, ''); // Extract filename from CSV row
+      
+      // Properly parse CSV row to extract filename (first field)
+      const fields = this.parseCsvLine(csvRow);
+      const newFilename = fields[0]?.replace(/^"|"$/g, '') || '';
+      
+      if (!newFilename) {
+        console.warn('Cannot append CSV row: no filename found', csvRow);
+        return;
+      }
       
       try {
         // Try to get existing file
@@ -292,22 +325,26 @@ export class FileSystemService {
         existingContent = await this.readCsvFile(fileHandle);
         
         // Check if this filename already exists in CSV to avoid duplicates
-        const lines = existingContent.split('\n');
+        const lines = existingContent.split('\n').filter(line => line.trim());
         const existingFilenames = lines.slice(1).map(line => {
-          const firstField = line.split(',')[0];
-          return firstField.replace(/^"|"$/g, '');
-        });
+          const parsedFields = this.parseCsvLine(line);
+          return parsedFields[0]?.replace(/^"|"$/g, '') || '';
+        }).filter(Boolean);
         
         if (existingFilenames.includes(newFilename)) {
           // File already in CSV, update the row instead of appending
           const updatedLines = lines.map((line, index) => {
             if (index === 0) return line; // Keep header
-            const firstField = line.split(',')[0].replace(/^"|"$/g, '');
-            return firstField === newFilename ? csvRow : line;
+            const parsedFields = this.parseCsvLine(line);
+            const lineFilename = parsedFields[0]?.replace(/^"|"$/g, '') || '';
+            return lineFilename === newFilename ? csvRow : line;
           });
+          
           const writable = await (fileHandle as any).createWritable();
-          await writable.write(updatedLines.join('\n') + '\n');
+          const updatedContent = updatedLines.join('\n') + (updatedLines.length > 1 ? '\n' : '');
+          await writable.write(updatedContent);
           await writable.close();
+          console.log(`Updated CSV row for: ${newFilename}`);
           return;
         }
         
@@ -315,15 +352,22 @@ export class FileSystemService {
         if (!existingContent.endsWith('\n')) {
           existingContent += '\n';
         }
-      } catch (e) {
+      } catch (e: any) {
         // File doesn't exist, create it with headers
-        fileHandle = await (directoryHandle as any).getFileHandle(filename, { create: true });
-        existingContent = 'Filename,Title,Keywords,Category,Releases,Description\n';
+        if (e.name === 'NotFoundError' || e.name === 'TypeError') {
+          fileHandle = await (directoryHandle as any).getFileHandle(filename, { create: true });
+          existingContent = 'Filename,Title,Keywords,Category,Releases,Description\n';
+        } else {
+          throw e;
+        }
       }
       
+      // Append new row
       const writable = await (fileHandle as any).createWritable();
-      await writable.write(existingContent + csvRow + '\n');
+      const newContent = existingContent + csvRow + '\n';
+      await writable.write(newContent);
       await writable.close();
+      console.log(`Appended CSV row for: ${newFilename}`);
     } catch (error) {
       console.error('Error appending to CSV:', error);
       throw error;

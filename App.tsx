@@ -477,13 +477,18 @@ function App() {
           try {
             const csvRow = generateCsvRow({
               ...item,
-              newFilename,
+              newFilename: newFilename || item.fileName,
               metadata: { ...metadata, readinessScore }
             }, PlatformPreset.STANDARD);
             await fileSystemService.appendToCsvFile(selectedFolder, csvRow, csvFilename);
+            console.log(`CSV updated for file: ${newFilename || item.fileName}`);
           } catch (csvError) {
             console.error('Error updating CSV file:', csvError);
-            // Continue even if CSV update fails
+            // Continue even if CSV update fails, but log it
+            setToast({ 
+              message: `Warning: CSV update failed for ${item.fileName}. Metadata saved to .pitagger.json file.`, 
+              type: "error" 
+            });
           }
         } catch (error) {
           console.error('Error saving metadata file:', error);

@@ -102,9 +102,54 @@ export class FileSystemService {
 
   async readFileForPreview(handle: FileSystemFileHandle): Promise<{ file: File; previewUrl: string }> {
     const file = await handle.getFile();
-    const previewUrl = file.type.startsWith('image/') 
-      ? URL.createObjectURL(file)
-      : '';
+    // For large files (>50MB), create a compressed preview to save memory
+    let previewUrl = '';
+    if (file.type.startsWith('image/')) {
+      if (file.size > 50 * 1024 * 1024) {
+        // Large image - create compressed preview
+        try {
+          const img = new Image();
+          const canvas = document.createElement('canvas');
+          const ctx = canvas.getContext('2d');
+          const objectUrl = URL.createObjectURL(file);
+          
+          await new Promise<void>((resolve, reject) => {
+            img.onload = () => {
+              // Resize to max 800px for preview
+              const maxSize = 800;
+              let width = img.width;
+              let height = img.height;
+              if (width > maxSize || height > maxSize) {
+                const ratio = Math.min(maxSize / width, maxSize / height);
+                width = width * ratio;
+                height = height * ratio;
+              }
+              
+              canvas.width = width;
+              canvas.height = height;
+              ctx?.drawImage(img, 0, 0, width, height);
+              previewUrl = canvas.toDataURL('image/jpeg', 0.7);
+              URL.revokeObjectURL(objectUrl);
+              resolve();
+            };
+            
+            img.onerror = () => {
+              URL.revokeObjectURL(objectUrl);
+              // Fallback to regular blob URL
+              previewUrl = URL.createObjectURL(file);
+              resolve();
+            };
+            
+            img.src = objectUrl;
+          });
+        } catch (e) {
+          // Fallback to regular blob URL
+          previewUrl = URL.createObjectURL(file);
+        }
+      } else {
+        previewUrl = URL.createObjectURL(file);
+      }
+    }
     return { file, previewUrl };
   }
 

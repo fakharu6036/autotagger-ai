@@ -46,6 +46,22 @@ function App() {
   const activeProcessingIds = useRef<Set<string>>(new Set());
   const GEMINI_FREE_TIER_LIMIT = REQUESTS_PER_MINUTE; // Conservative limit to avoid 429 errors
 
+  // Cleanup blob URLs on unmount
+  useEffect(() => {
+    return () => {
+      // Clean up all blob URLs when component unmounts
+      files.forEach(f => {
+        if (f.previewUrl && f.previewUrl.startsWith('blob:')) {
+          try {
+            URL.revokeObjectURL(f.previewUrl);
+          } catch (e) {
+            // Ignore errors when revoking
+          }
+        }
+      });
+    };
+  }, []); // Only run on unmount
+
   useEffect(() => {
     const mem = localStorage.getItem('autotagger_style_mem_v4');
     if (mem) {
@@ -651,17 +667,21 @@ function App() {
       // Load previews individually and show them as they load
       // This provides immediate visual feedback as each preview becomes available
       const loadAllPreviews = async () => {
-        // Load previews in small concurrent batches (5 at a time) for balance
-        // This shows previews appearing progressively while maintaining performance
-        const concurrentLimit = 5;
+        // Reduce concurrent limit for large folders to prevent memory issues
+        // Check if we have large files (>50MB) to adjust batch size
+        const hasLargeFiles = newFiles.some(f => {
+          // We can't check file size from handle, so use a conservative limit
+          return true; // Assume some files might be large
+        });
+        const concurrentLimit = hasLargeFiles ? 3 : 5; // Reduce to 3 for safety
         
         for (let i = 0; i < newFiles.length; i += concurrentLimit) {
           const batch = newFiles.slice(i, i + concurrentLimit);
           // Load batch in parallel - each preview will appear as it loads
           await Promise.all(batch.map(item => loadPreview(item)));
-          // Very small delay to prevent browser overload
+          // Longer delay for large folders to prevent browser overload
           if (i + concurrentLimit < newFiles.length) {
-            await new Promise(resolve => setTimeout(resolve, 10));
+            await new Promise(resolve => setTimeout(resolve, hasLargeFiles ? 50 : 10));
           }
         }
         setToast({ message: `Loaded ${newFiles.length} files with previews`, type: "success" });
@@ -685,6 +705,15 @@ function App() {
     setFolderName(null);
     fileSystemService.setDirectory(null);
     
+    // Check for very large files and warn user
+    const largeFiles = selectedFiles.filter(f => f.size > 100 * 1024 * 1024); // > 100MB
+    if (largeFiles.length > 0) {
+      setToast({ 
+        message: `Warning: ${largeFiles.length} file(s) over 100MB detected. Processing may be slow.`, 
+        type: "error" 
+      });
+    }
+    
     // Add all files to queue immediately (basic info only)
     const newFiles: FileItem[] = selectedFiles.map(f => ({
       id: generateId(),
@@ -699,14 +728,59 @@ function App() {
     setFiles(prev => [...prev, ...newFiles]);
     
     // Process uploads sequentially to prevent browser crashes
+    // For large files, process one at a time with longer delays
     for (const item of newFiles) {
       setIsProcessingUpload(true);
+      
+      const isLargeFile = item.file && item.file.size > 50 * 1024 * 1024; // > 50MB
       
       try {
         // Generate preview for images immediately (lightweight)
         if (item.file && item.file.type.startsWith('image/')) {
-          const previewUrl = URL.createObjectURL(item.file);
-          setFiles(curr => curr.map(f => f.id === item.id ? { ...f, previewUrl } : f));
+          // For large images, use a smaller preview to save memory
+          if (isLargeFile) {
+            // Create a compressed preview for large images
+            try {
+              const img = new Image();
+              const canvas = document.createElement('canvas');
+              const ctx = canvas.getContext('2d');
+              const objectUrl = URL.createObjectURL(item.file);
+              
+              img.onload = () => {
+                // Resize to max 800px for preview
+                const maxSize = 800;
+                let width = img.width;
+                let height = img.height;
+                if (width > maxSize || height > maxSize) {
+                  const ratio = Math.min(maxSize / width, maxSize / height);
+                  width = width * ratio;
+                  height = height * ratio;
+                }
+                
+                canvas.width = width;
+                canvas.height = height;
+                ctx?.drawImage(img, 0, 0, width, height);
+                const previewUrl = canvas.toDataURL('image/jpeg', 0.7);
+                URL.revokeObjectURL(objectUrl);
+                setFiles(curr => curr.map(f => f.id === item.id ? { ...f, previewUrl } : f));
+              };
+              
+              img.onerror = () => {
+                URL.revokeObjectURL(objectUrl);
+                const previewUrl = URL.createObjectURL(item.file);
+                setFiles(curr => curr.map(f => f.id === item.id ? { ...f, previewUrl } : f));
+              };
+              
+              img.src = objectUrl;
+            } catch (err) {
+              // Fallback to regular blob URL
+              const previewUrl = URL.createObjectURL(item.file);
+              setFiles(curr => curr.map(f => f.id === item.id ? { ...f, previewUrl } : f));
+            }
+          } else {
+            const previewUrl = URL.createObjectURL(item.file);
+            setFiles(curr => curr.map(f => f.id === item.id ? { ...f, previewUrl } : f));
+          }
         } 
         // Process videos sequentially (heavy operation)
         else if (item.file && item.file.type.startsWith('video/')) {
@@ -721,8 +795,9 @@ function App() {
         console.error('Error processing file:', err);
       }
       
-      // Small delay between files to prevent browser overload
-      await new Promise(resolve => setTimeout(resolve, 50));
+      // Longer delay for large files to prevent browser overload
+      const delay = isLargeFile ? 200 : 50;
+      await new Promise(resolve => setTimeout(resolve, delay));
     }
     
     setIsProcessingUpload(false);
@@ -1058,6 +1133,15 @@ function App() {
                       item={f} 
                       onClick={(e) => toggleSelection(f.id, e.shiftKey)} 
                       onRemove={id => {
+                        // Clean up blob URL before removing file
+                        const fileToRemove = files.find(file => file.id === id);
+                        if (fileToRemove?.previewUrl && fileToRemove.previewUrl.startsWith('blob:')) {
+                          try {
+                            URL.revokeObjectURL(fileToRemove.previewUrl);
+                          } catch (e) {
+                            // Ignore errors when revoking
+                          }
+                        }
                         setFiles(curr => curr.filter(x => x.id !== id));
                         setSelectedIds(prev => {
                           const next = new Set(prev);
@@ -1076,19 +1160,28 @@ function App() {
                       }}
                     />
                   ) : (
-                    <FileCard 
-                      item={f} 
-                      onClick={(e) => toggleSelection(f.id, e.shiftKey)} 
-                      onRemove={id => {
-                        setFiles(curr => curr.filter(x => x.id !== id));
-                        setSelectedIds(prev => {
-                          const next = new Set(prev);
-                          next.delete(id);
-                          return next;
-                        });
-                      }}
-                      isSelected={selectedIds.has(f.id)} 
-                    />
+                           <FileCard 
+                             item={f} 
+                             onClick={(e) => toggleSelection(f.id, e.shiftKey)} 
+                             onRemove={id => {
+                               // Clean up blob URL before removing file
+                               const fileToRemove = files.find(file => file.id === id);
+                               if (fileToRemove?.previewUrl && fileToRemove.previewUrl.startsWith('blob:')) {
+                                 try {
+                                   URL.revokeObjectURL(fileToRemove.previewUrl);
+                                 } catch (e) {
+                                   // Ignore errors when revoking
+                                 }
+                               }
+                               setFiles(curr => curr.filter(x => x.id !== id));
+                               setSelectedIds(prev => {
+                                 const next = new Set(prev);
+                                 next.delete(id);
+                                 return next;
+                               });
+                             }}
+                             isSelected={selectedIds.has(f.id)} 
+                           />
                   )}
                 </div>
               ))}

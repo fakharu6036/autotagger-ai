@@ -528,23 +528,26 @@ function App() {
         }
       };
       
-      // Load all previews in parallel batches for faster overall loading
-      // Use larger batches (20 at a time) to load faster while preventing browser overload
-      const batchSize = 20;
+      // Load previews individually and show them as they load
+      // This provides immediate visual feedback as each preview becomes available
       const loadAllPreviews = async () => {
-        for (let i = 0; i < newFiles.length; i += batchSize) {
-          const batch = newFiles.slice(i, i + batchSize);
-          // Load batch in parallel
+        // Load previews in small concurrent batches (5 at a time) for balance
+        // This shows previews appearing progressively while maintaining performance
+        const concurrentLimit = 5;
+        
+        for (let i = 0; i < newFiles.length; i += concurrentLimit) {
+          const batch = newFiles.slice(i, i + concurrentLimit);
+          // Load batch in parallel - each preview will appear as it loads
           await Promise.all(batch.map(item => loadPreview(item)));
-          // Small delay between batches to prevent browser overload
-          if (i + batchSize < newFiles.length) {
-            await new Promise(resolve => setTimeout(resolve, 50));
+          // Very small delay to prevent browser overload
+          if (i + concurrentLimit < newFiles.length) {
+            await new Promise(resolve => setTimeout(resolve, 10));
           }
         }
         setToast({ message: `Loaded ${newFiles.length} files with previews`, type: "success" });
       };
       
-      // Start loading all previews in background
+      // Start loading all previews in background - they'll appear as they load
       loadAllPreviews();
     } catch (error: any) {
       setIsProcessingUpload(false);

@@ -307,9 +307,9 @@ REQUIREMENTS:
    - Uses natural language that's both descriptive and keyword-rich
    - Avoids generic phrases, be specific
 
-3. Keywords: Generate exactly 70 keywords total:
-   - 50 PRIMARY keywords covering: Main Subject, Secondary Subjects, Environment/Setting, Action/Activity, Lighting Conditions, Time of Day, Mood/Emotion, Style/Aesthetic, Colors, Composition Elements
-   - 20 BACKUP keywords: Alternative terms, synonyms, related concepts, and secondary associations
+3. Keywords: Generate exactly 50 PRIMARY keywords (not 70 total). Each keyword must be in the keywordsWithScores array with this structure:
+   - Each item: {"word": "keyword", "score": "strong|medium|weak", "specificity": 0-100, "demand": 0-100, "platformFit": 0-100, "reason": "brief explanation"}
+   - Plus 20 BACKUP keywords as a simple string array: ["keyword1", "keyword2", ...]
    - Prioritize specific, searchable terms over generic ones
    - Include both broad and niche keywords
 
@@ -480,19 +480,59 @@ Start your response with an opening brace and end with a closing brace. Return O
                 let json: any;
                 try {
                   json = JSON.parse(jsonStr);
-                } catch (parseError) {
-                  console.error('Failed to parse JSON response:', parseError, jsonStr);
-                  // Try to extract JSON object from the text
-                  const jsonMatch = jsonStr.match(/\{[\s\S]*\}/);
-                  if (jsonMatch) {
-                    try {
-                      json = JSON.parse(jsonMatch[0]);
-                    } catch (e) {
-                      throw new Error('Invalid JSON response from API. Please try again.');
+                } catch (parseError: any) {
+                  console.error('Failed to parse JSON response (retry path):', parseError.message, 'Position:', parseError.message.match(/position (\d+)/)?.[1] || 'unknown', 'Text length:', jsonStr.length);
+                  
+                  // Check if JSON might be truncated
+                  if (jsonStr.length > 100000) {
+                    console.warn('Large JSON response detected in retry, attempting to fix truncation...');
+                    let fixedJson = jsonStr.trim();
+                    
+                    if (!fixedJson.endsWith('}')) {
+                      const openBraces = (fixedJson.match(/\{/g) || []).length;
+                      const closeBraces = (fixedJson.match(/\}/g) || []).length;
+                      const openBrackets = (fixedJson.match(/\[/g) || []).length;
+                      const closeBrackets = (fixedJson.match(/\]/g) || []).length;
+                      
+                      for (let i = 0; i < (openBrackets - closeBrackets); i++) {
+                        fixedJson += ']';
+                      }
+                      for (let i = 0; i < (openBraces - closeBraces); i++) {
+                        fixedJson += '}';
+                      }
+                      
+                      try {
+                        json = JSON.parse(fixedJson);
+                        console.log('Successfully fixed truncated JSON in retry path');
+                      } catch (e) {
+                        // Continue to extraction fallback
+                      }
                     }
-                  } else {
-                    throw new Error('Invalid JSON response from API. Please try again.');
                   }
+                  
+                  // If still not parsed, try extraction
+                  if (!json) {
+                    const jsonMatch = jsonStr.match(/\{[\s\S]*\}/);
+                    if (jsonMatch && jsonMatch[0]) {
+                      try {
+                        json = JSON.parse(jsonMatch[0]);
+                      } catch (e) {
+                        throw new Error(`Invalid JSON response from API. The response appears to be truncated or malformed (${jsonStr.length} chars). Please try again.`);
+                      }
+                    } else {
+                      throw new Error(`Invalid JSON response from API. Failed to parse after multiple attempts. Response length: ${jsonStr.length} chars.`);
+                    }
+                  }
+                }
+                
+                // Validate required fields exist
+                if (!json.title || !json.description || !Array.isArray(json.keywordsWithScores)) {
+                  console.warn('JSON response missing required fields (retry path):', {
+                    hasTitle: !!json.title,
+                    hasDescription: !!json.description,
+                    hasKeywords: Array.isArray(json.keywordsWithScores),
+                    keys: Object.keys(json)
+                  });
                 }
                 
                 const keywords = (json.keywordsWithScores || []).map((k: any) => {
@@ -595,24 +635,79 @@ Start your response with an opening brace and end with a closing brace. Return O
         let json: any;
         try {
           json = JSON.parse(jsonStr);
-        } catch (parseError) {
-          console.error('Failed to parse JSON response:', parseError, 'Raw text:', jsonStr.substring(0, 200));
-          // Try to extract JSON object from the text as fallback
-          const jsonMatch = jsonStr.match(/\{[\s\S]*\}/);
-          if (jsonMatch && jsonMatch[0]) {
-            try {
-              json = JSON.parse(jsonMatch[0]);
-            } catch (e) {
-              throw new Error('Invalid JSON response from API. The model returned text instead of JSON. Please try again.');
+        } catch (parseError: any) {
+          console.error('Failed to parse JSON response:', parseError.message, 'Position:', parseError.message.match(/position (\d+)/)?.[1] || 'unknown', 'Text length:', jsonStr.length);
+          
+          // Check if JSON might be truncated (common with large responses)
+          if (jsonStr.length > 100000) {
+            console.warn('Large JSON response detected, attempting to fix truncation...');
+            // Try to fix common truncation issues
+            let fixedJson = jsonStr.trim();
+            
+            // If it ends abruptly, try to close arrays/objects
+            if (!fixedJson.endsWith('}')) {
+              // Count unclosed braces/brackets
+              const openBraces = (fixedJson.match(/\{/g) || []).length;
+              const closeBraces = (fixedJson.match(/\}/g) || []).length;
+              const openBrackets = (fixedJson.match(/\[/g) || []).length;
+              const closeBrackets = (fixedJson.match(/\]/g) || []).length;
+              
+              // Close unclosed arrays first, then objects
+              for (let i = 0; i < (openBrackets - closeBrackets); i++) {
+                fixedJson += ']';
+              }
+              for (let i = 0; i < (openBraces - closeBraces); i++) {
+                fixedJson += '}';
+              }
+              
+              try {
+                json = JSON.parse(fixedJson);
+                console.log('Successfully fixed truncated JSON');
+              } catch (e) {
+                // If fixing didn't work, try extraction
+              }
+            }
+            
+            // If still not parsed, try extraction
+            if (!json) {
+              const jsonMatch = jsonStr.match(/\{[\s\S]*\}/);
+              if (jsonMatch && jsonMatch[0]) {
+                try {
+                  json = JSON.parse(jsonMatch[0]);
+                } catch (e) {
+                  // Last resort: try to extract and fix the JSON
+                  throw new Error(`Invalid JSON response from API. The response appears to be truncated or malformed (${jsonStr.length} chars). Please try again.`);
+                }
+              }
             }
           } else {
-            throw new Error('Invalid JSON response from API. The model returned text instead of JSON. Please try again.');
+            // For smaller responses, try extraction
+            const jsonMatch = jsonStr.match(/\{[\s\S]*\}/);
+            if (jsonMatch && jsonMatch[0]) {
+              try {
+                json = JSON.parse(jsonMatch[0]);
+              } catch (e) {
+                throw new Error('Invalid JSON response from API. The model returned text instead of JSON. Please try again.');
+              }
+            } else {
+              throw new Error('Invalid JSON response from API. The model returned text instead of JSON. Please try again.');
+            }
+          }
+          
+          // If we still don't have json, throw error
+          if (!json) {
+            throw new Error(`Invalid JSON response from API. Failed to parse after multiple attempts. Response length: ${jsonStr.length} chars.`);
           }
         }
         
         // Validate required fields exist
         if (!json.title || !json.description || !Array.isArray(json.keywordsWithScores)) {
-          console.warn('JSON response missing required fields:', json);
+          console.warn('JSON response missing required fields:', {
+            hasTitle: !!json.title,
+            hasDescription: !!json.description,
+            hasKeywords: Array.isArray(json.keywordsWithScores),
+            keys: Object.keys(json)
+          });
           // Try to continue with what we have, but log the issue
         }
         

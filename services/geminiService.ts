@@ -66,20 +66,33 @@ export class GeminiService {
   private readonly CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
 
   private extractJsonFromResponse(text: string): string {
-    // Try to extract JSON from markdown code blocks
-    const codeBlockMatch = text.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/);
+    // Remove markdown code block markers if present
+    let cleaned = text.trim();
+    
+    // Remove ```json or ``` at the start
+    cleaned = cleaned.replace(/^```(?:json)?\s*/i, '');
+    // Remove ``` at the end
+    cleaned = cleaned.replace(/\s*```$/i, '');
+    
+    // Try to extract JSON from markdown code blocks (more flexible regex)
+    const codeBlockMatch = cleaned.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/);
     if (codeBlockMatch) {
-      return codeBlockMatch[1];
+      return codeBlockMatch[1].trim();
     }
     
-    // Try to find JSON object in the text
-    const jsonMatch = text.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
-      return jsonMatch[0];
+    // Try to find JSON object in the text (find the first { and last })
+    const firstBrace = cleaned.indexOf('{');
+    const lastBrace = cleaned.lastIndexOf('}');
+    if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+      const jsonCandidate = cleaned.substring(firstBrace, lastBrace + 1);
+      // Validate it looks like JSON
+      if (jsonCandidate.trim().startsWith('{') && jsonCandidate.trim().endsWith('}')) {
+        return jsonCandidate.trim();
+      }
     }
     
-    // Return original text if no JSON found
-    return text;
+    // Return cleaned text if no JSON found
+    return cleaned;
   }
 
   private getBestModel(): string {

@@ -8,7 +8,7 @@ import MetadataSidebar from './components/MetadataSidebar';
 import SettingsModal from './components/SettingsModal';
 import ApiQuotaStatus from './components/ApiQuotaStatus';
 import { FileItem, ProcessingStatus, ApiKeyRecord, PlatformPreset, GenerationProfile, StyleMemory } from './types';
-import { generateId, readFileAsBase64, getVideoFrames, downloadCsv, generateFilename, downloadAllFiles, calculateReadinessScore } from './services/fileUtils';
+import { generateId, readFileAsBase64, getVideoFrames, downloadCsv, generateFilename, downloadAllFiles, calculateReadinessScore, generateCsvContent } from './services/fileUtils';
 import { geminiService, QuotaExceededInternal } from './services/geminiService';
 import { fileSystemService, FileSystemDirectoryHandle, FileSystemFileHandle } from './services/fileSystemService';
 
@@ -420,13 +420,29 @@ function App() {
       // Save metadata to file system if using folder mode
       if (item.isFromFileSystem && selectedFolder && item.fileName) {
         try {
-          await fileSystemService.saveMetadataFile(selectedFolder, item.fileName, {
+          await fileSystemService.saveMetadataFile(selectedFolder, item.filePath || item.fileName, {
             ...metadata,
             readinessScore,
             generatedAt: new Date().toISOString(),
             originalFilename,
             newFilename
           });
+          
+          // Rename file if newFilename is different from original
+          if (newFilename !== originalFilename && item.filePath) {
+            try {
+              await fileSystemService.renameFileInFolder(selectedFolder, item.filePath, newFilename);
+              // Update the file path after renaming
+              setFiles(prev => prev.map(f => f.id === item.id ? { 
+                ...f, 
+                fileName: newFilename,
+                filePath: item.filePath?.replace(item.fileName, newFilename) || newFilename
+              } : f));
+            } catch (renameError) {
+              console.error('Error renaming file:', renameError);
+              // Continue even if rename fails
+            }
+          }
         } catch (error) {
           console.error('Error saving metadata file:', error);
         }
@@ -468,22 +484,24 @@ function App() {
       // Get all files from folder
       const folderFiles = await fileSystemService.getFilesFromFolder(folderHandle);
       
-      // Create file items without loading files into memory
+      // Create file items immediately - show all files right away
       const newFiles: FileItem[] = folderFiles.map(({ handle, name, path }) => ({
         id: generateId(),
         fileHandle: handle,
         fileName: name,
         filePath: path,
-        previewUrl: '', // Will be loaded on-demand
+        previewUrl: '', // Will be loaded in parallel
         status: ProcessingStatus.PENDING,
         metadata: { title: '', description: '', keywords: [], category: '' },
         isFromFileSystem: true
       }));
       
+      // Show all files immediately
       setFiles(newFiles);
+      setIsProcessingUpload(false);
       
-      // Load previews sequentially (on-demand, not all at once)
-      for (const item of newFiles) {
+      // Load previews in parallel batches for better performance
+      const loadPreview = async (item: FileItem) => {
         try {
           const { file, previewUrl } = await fileSystemService.readFileForPreview(item.fileHandle);
           if (file.type.startsWith('image/')) {
@@ -499,12 +517,14 @@ function App() {
         } catch (err) {
           console.error('Error loading preview:', err);
         }
-        
-        // Small delay to prevent browser overload
-        await new Promise(resolve => setTimeout(resolve, 50));
-      }
+      };
       
-      setIsProcessingUpload(false);
+      // Load previews in parallel batches of 10 to balance speed and browser performance
+      const batchSize = 10;
+      for (let i = 0; i < newFiles.length; i += batchSize) {
+        const batch = newFiles.slice(i, i + batchSize);
+        await Promise.all(batch.map(item => loadPreview(item)));
+      }
       setToast({ message: `Loaded ${newFiles.length} files from folder`, type: "success" });
     } catch (error: any) {
       setIsProcessingUpload(false);
@@ -606,10 +626,20 @@ function App() {
 
     setVariantProcessingId(id);
     try {
-      const isVideo = item.file.type.startsWith('video/');
+      // Get file for processing (either from handle or existing file object)
+      let processingFile: File;
+      if (item.isFromFileSystem && item.fileHandle) {
+        processingFile = await fileSystemService.readFileForProcessing(item.fileHandle);
+      } else if (item.file) {
+        processingFile = item.file;
+      } else {
+        throw new Error('No file available for processing');
+      }
+
+      const isVideo = processingFile.type.startsWith('video/');
       const payload = isVideo 
-        ? { frames: item.base64Frames, mimeType: 'image/jpeg' }
-        : { base64: await readFileAsBase64(item.file), mimeType: item.file.type };
+        ? { frames: item.base64Frames || [], mimeType: 'image/jpeg' }
+        : { base64: await readFileAsBase64(processingFile), mimeType: processingFile.type };
 
       const variantMetadata = await geminiService.generateMetadata(keySlot.key, payload, currentProfile, styleMemory, true);
       updateKeySlotTiming(keySlot.id);
@@ -660,7 +690,23 @@ function App() {
           setIsQueueActive(true);
         }}
         onStopQueue={() => setIsQueueActive(false)}
-        onExport={p => downloadCsv(files, p)}
+        onExport={async (p) => {
+          if (selectedFolder) {
+            // Save CSV to local folder
+            try {
+              const csvContent = generateCsvContent(files, p);
+              const filename = `pitagger_${p.toLowerCase().replace(/\s+/g, '_')}_${new Date().toISOString().slice(0, 10)}.csv`;
+              await fileSystemService.saveCsvFile(selectedFolder, csvContent, filename);
+              setToast({ message: `CSV saved to folder: ${filename}`, type: "success" });
+            } catch (error) {
+              console.error('Error saving CSV:', error);
+              setToast({ message: "Error saving CSV to folder", type: "error" });
+            }
+          } else {
+            // Download CSV normally
+            downloadCsv(files, p);
+          }
+        }}
         onDownloadFiles={async () => {
           if (selectedFolder) {
             // In folder mode, just export CSV (files are already local)
@@ -827,8 +873,35 @@ function App() {
       {sidebarFileId && (
         <MetadataSidebar 
           file={files.find(f => f.id === sidebarFileId)!}
-          onUpdate={(id, field, value) => {
-             setFiles(prev => prev.map(f => f.id === id ? { ...f, [field]: value } : f));
+          onUpdate={async (id, field, value) => {
+            const file = files.find(f => f.id === id);
+            setFiles(prev => prev.map(f => {
+              if (f.id !== id) return f;
+              if (field === 'metadata') {
+                const readinessScore = calculateReadinessScore(value, value.rejectionRisks || []);
+                return { ...f, metadata: { ...value, readinessScore } };
+              }
+              return { ...f, [field]: value };
+            }));
+            
+            // Save metadata to folder if using file system mode
+            if (field === 'metadata' && file && file.isFromFileSystem && selectedFolder && file.fileName) {
+              try {
+                const updatedFile = files.find(f => f.id === id);
+                if (updatedFile) {
+                  const readinessScore = calculateReadinessScore(value, value.rejectionRisks || []);
+                  await fileSystemService.saveMetadataFile(selectedFolder, file.filePath || file.fileName, {
+                    ...value,
+                    readinessScore,
+                    generatedAt: new Date().toISOString(),
+                    originalFilename: file.fileName,
+                    newFilename: updatedFile.newFilename || file.fileName
+                  });
+                }
+              } catch (error) {
+                console.error('Error saving updated metadata:', error);
+              }
+            }
           }}
           onGenerateVariant={handleGenerateVariant}
           onClose={() => setSidebarFileId(null)}

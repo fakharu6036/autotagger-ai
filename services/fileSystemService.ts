@@ -148,6 +148,68 @@ export class FileSystemService {
   setDirectory(handle: FileSystemDirectoryHandle | null) {
     this.directoryHandle = handle;
   }
+
+  async saveCsvFile(
+    directoryHandle: FileSystemDirectoryHandle,
+    csvContent: string,
+    filename: string = `pitagger_export_${new Date().toISOString().slice(0, 10)}.csv`
+  ): Promise<void> {
+    const fileHandle = await (directoryHandle as any).getFileHandle(filename, { create: true });
+    const writable = await (fileHandle as any).createWritable();
+    await writable.write(csvContent);
+    await writable.close();
+  }
+
+  async renameFileInFolder(
+    directoryHandle: FileSystemDirectoryHandle,
+    filePath: string,
+    newName: string
+  ): Promise<void> {
+    try {
+      // Handle nested paths
+      const pathParts = filePath.includes('/') ? filePath.split('/') : [filePath];
+      const actualFilename = pathParts[pathParts.length - 1];
+      let targetDir = directoryHandle;
+      
+      // Navigate to subdirectory if needed
+      if (pathParts.length > 1) {
+        const dirPath = pathParts.slice(0, -1);
+        for (const dirName of dirPath) {
+          targetDir = await (targetDir as any).getDirectoryHandle(dirName);
+        }
+      }
+      
+      const oldHandle = await (targetDir as any).getFileHandle(actualFilename);
+      const newHandle = await (targetDir as any).getFileHandle(newName, { create: true });
+      
+      // Copy file content
+      const file = await oldHandle.getFile();
+      const writable = await (newHandle as any).createWritable();
+      await writable.write(await file.arrayBuffer());
+      await writable.close();
+      
+      // Delete old file
+      await (targetDir as any).removeEntry(actualFilename);
+      
+      // Also rename metadata file if it exists
+      const oldMetadataName = `${actualFilename}.pitagger.json`;
+      const newMetadataName = `${newName}.pitagger.json`;
+      try {
+        const oldMetadataHandle = await (targetDir as any).getFileHandle(oldMetadataName);
+        const newMetadataHandle = await (targetDir as any).getFileHandle(newMetadataName, { create: true });
+        const metadataFile = await oldMetadataHandle.getFile();
+        const writable = await (newMetadataHandle as any).createWritable();
+        await writable.write(await metadataFile.arrayBuffer());
+        await writable.close();
+        await (targetDir as any).removeEntry(oldMetadataName);
+      } catch (e) {
+        // Metadata file doesn't exist, that's okay
+      }
+    } catch (error) {
+      console.error('Error renaming file:', error);
+      throw error;
+    }
+  }
 }
 
 export const fileSystemService = new FileSystemService();

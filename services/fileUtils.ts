@@ -183,7 +183,8 @@ export const generateCsvContent = (files: FileItem[], preset: PlatformPreset = P
   };
 
   const rows = files.map(item => {
-    const fn = toCsvField(item.newFilename || item.file.name);
+    const filename = item.newFilename || item.fileName || (item.file ? item.file.name : 'unknown');
+    const fn = toCsvField(filename);
     const title = toCsvField(item.metadata.title);
     const kws = toCsvField(item.metadata.keywords.join(', '));
     const cat = toCsvField(item.metadata.category);

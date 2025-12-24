@@ -47,11 +47,14 @@ const METADATA_SCHEMA = {
 
 // Models ordered by free tier access (best first)
 // Try models with better free tier limits first
+// Using correct model identifiers for @google/genai SDK
+// The SDK expects just the model name, not the full path
 const AVAILABLE_MODELS = [
-  'gemini-1.5-flash-latest',  // Good free tier, fast
-  'gemini-1.5-flash',          // Stable version
-  'gemini-1.5-pro-latest',    // Better quality, may have different limits
-  'gemini-1.5-pro',           // Stable pro version
+  'gemini-1.5-flash',        // Most stable and widely available
+  'gemini-1.5-flash-001',    // Specific version if available
+  'gemini-1.5-pro',          // Pro version
+  'gemini-pro',              // Older stable model
+  'gemini-1.0-pro',         // Version 1.0 fallback
 ];
 
 export class GeminiService {

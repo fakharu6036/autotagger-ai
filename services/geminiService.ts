@@ -716,9 +716,32 @@ Return ONLY the JSON object.` }
           errMsg.toLowerCase().includes('permission denied') ||
           errMsg.toLowerCase().includes('api key not valid');
         
-        if (isRateLimit || isModelNotFound) {
+        if (isRateLimit) {
+          // Extract retry-after time from error message
+          let retryAfterSeconds = 10; // Default 10 seconds
+          const retryMatch = errMsg.match(/retry in ([\d.]+)s/i);
+          if (retryMatch && retryMatch[1]) {
+            retryAfterSeconds = Math.ceil(parseFloat(retryMatch[1])) + 2; // Add 2 seconds buffer
+          }
+          
           lastError = e;
-          console.warn(`Model ${model} unavailable (${isRateLimit ? 'rate limit' : 'not found/disabled'}), trying next...`);
+          console.warn(`Model ${model} rate limited. Waiting ${retryAfterSeconds}s before trying next...`);
+          
+          // Wait before trying next model
+          await new Promise(resolve => setTimeout(resolve, retryAfterSeconds * 1000));
+          
+          // Limit number of model attempts to avoid cascading rate limits
+          const modelIndex = modelsToTry.indexOf(model);
+          if (modelIndex >= 2) {
+            throw new QuotaExceededInternal();
+          }
+          
+          continue; // Try next model after delay
+        }
+        
+        if (isModelNotFound) {
+          lastError = e;
+          console.warn(`Model ${model} not found/disabled, trying next...`);
           continue; // Try next model
         }
         

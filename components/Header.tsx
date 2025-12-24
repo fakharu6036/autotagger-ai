@@ -28,6 +28,8 @@ interface HeaderProps {
 const Header: React.FC<HeaderProps> = ({ 
   totalFiles, 
   completedFiles, 
+  processingFiles,
+  pendingFiles,
   isQueueActive,
   onExport, 
   onDownloadFiles,
@@ -68,12 +70,24 @@ const Header: React.FC<HeaderProps> = ({
         {totalFiles > 0 && !allCompleted && (
           <button
             onClick={isQueueActive ? onStopQueue : onStartQueue}
-            className={`flex items-center gap-2 px-6 py-2 rounded-full text-sm font-medium transition-all shadow-sm ${isQueueActive ? 'bg-amber-100 text-amber-700 hover:bg-amber-200' : 'bg-brand-600 text-white hover:bg-brand-700 active:scale-95'}`}
+            className={`flex items-center gap-2 px-6 py-2.5 rounded-full text-sm font-medium transition-all shadow-sm hover:shadow-md ${isQueueActive ? 'bg-amber-100 text-amber-700 hover:bg-amber-200 border border-amber-200' : 'bg-brand-600 text-white hover:bg-brand-700 active:scale-95'}`}
           >
             {isQueueActive ? (
-              <><div className="w-2 h-2 bg-amber-600 rounded-full animate-pulse" /> Pause</>
+              <>
+                <div className="w-2 h-2 bg-amber-600 rounded-full animate-pulse" /> 
+                <span>Pause</span>
+                {processingFiles > 0 && (
+                  <span className="ml-1 text-xs opacity-75">({processingFiles})</span>
+                )}
+              </>
             ) : (
-              <><svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg> Run Analysis</>
+              <>
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg> 
+                <span>Run Analysis</span>
+                {pendingFiles > 0 && (
+                  <span className="ml-1 text-xs opacity-90">({pendingFiles})</span>
+                )}
+              </>
             )}
           </button>
         )}

@@ -77,6 +77,7 @@ export interface StyleMemory {
   preferredTones: string[];
   lastUsedProfile: GenerationProfile;
   customProfilePrompts?: Record<GenerationProfile, string>;
+  selectedModel?: string; // User-selected Gemini model
 }
 
 export interface FileItem {

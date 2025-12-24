@@ -62,16 +62,38 @@ const FileCard: React.FC<FileCardProps> = ({ item, onRemove, onClick, isSelected
       </div>
 
       {/* Detail Area */}
-      <div className="p-4 flex flex-col gap-1">
+      <div className="p-4 flex flex-col gap-1.5">
         <div className="flex items-center gap-2">
-           <div className={`w-1.5 h-1.5 rounded-full ${statusColors[item.status]}`} />
+           <div className={`w-1.5 h-1.5 rounded-full ${statusColors[item.status]} ${item.status === ProcessingStatus.PROCESSING ? 'animate-pulse' : ''}`} />
            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest truncate">
              {item.metadata.category || 'Standard Asset'}
            </p>
         </div>
-        <h4 className="text-xs font-medium text-slate-700 dark:text-slate-200 truncate leading-tight">
+        <h4 className="text-xs font-medium text-slate-700 dark:text-slate-200 truncate leading-tight line-clamp-2">
           {item.metadata.title || item.fileName || (item.file ? item.file.name : 'Unknown')}
         </h4>
+        {item.status === ProcessingStatus.COMPLETED && item.metadata.readinessScore !== undefined && (
+          <div className="flex items-center gap-1.5 mt-1">
+            <div className="flex-1 h-1 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
+              <div 
+                className={`h-full transition-all duration-500 ${
+                  item.metadata.readinessScore >= 80 ? 'bg-emerald-500' : 
+                  item.metadata.readinessScore >= 60 ? 'bg-brand-500' : 
+                  'bg-amber-500'
+                }`}
+                style={{ width: `${item.metadata.readinessScore}%` }}
+              />
+            </div>
+            <span className="text-[10px] font-semibold text-slate-500 dark:text-slate-400">
+              {item.metadata.readinessScore}%
+            </span>
+          </div>
+        )}
+        {item.status === ProcessingStatus.ERROR && item.error && (
+          <p className="text-[10px] text-rose-600 dark:text-rose-400 truncate mt-1">
+            {item.error}
+          </p>
+        )}
       </div>
     </div>
   );

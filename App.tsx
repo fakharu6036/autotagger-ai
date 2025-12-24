@@ -48,7 +48,13 @@ function App() {
 
   useEffect(() => {
     const mem = localStorage.getItem('autotagger_style_mem_v4');
-    if (mem) setStyleMemory(JSON.parse(mem));
+    if (mem) {
+      const parsed = JSON.parse(mem);
+      setStyleMemory({
+        ...parsed,
+        selectedModel: parsed.selectedModel || 'auto' // Default to auto if not set
+      });
+    }
 
     const keys = localStorage.getItem('autotagger_api_vault_v4');
     if (keys) {
@@ -377,7 +383,7 @@ function App() {
       
       while (retries < maxRetries) {
         try {
-          metadata = await geminiService.generateMetadata(apiKey, payload, currentProfile, styleMemory);
+          metadata = await geminiService.generateMetadata(apiKey, payload, currentProfile, styleMemory, false, styleMemory.selectedModel);
           updateKeySlotTiming(currentKeySlot.id);
           // Add delay after successful request to respect rate limits
           await new Promise(resolve => setTimeout(resolve, MIN_SAFE_INTERVAL_MS));
@@ -755,7 +761,7 @@ function App() {
         ? { frames: item.base64Frames || [], mimeType: 'image/jpeg' }
         : { base64: await readFileAsBase64ForAPI(processingFile), mimeType: processingFile.type };
 
-      const variantMetadata = await geminiService.generateMetadata(keySlot.key, payload, currentProfile, styleMemory, true);
+      const variantMetadata = await geminiService.generateMetadata(keySlot.key, payload, currentProfile, styleMemory, true, styleMemory.selectedModel);
       updateKeySlotTiming(keySlot.id);
       setFiles(prev => prev.map(f => f.id === id ? { ...f, variantB: variantMetadata } : f));
     } catch (e: any) {
@@ -851,35 +857,43 @@ function App() {
               isFolderMode={!!selectedFolder}
               folderName={folderName}
             />
-            <div className="mt-12 text-center max-w-xl text-slate-500">
-               <p className="text-lg font-medium mb-4">Start your stock workflow.</p>
-               <div className="grid grid-cols-3 gap-8 opacity-60">
-                  <div className="space-y-2">
-                    <div className="text-2xl">⚡</div>
-                    <p className="text-xs uppercase font-bold tracking-widest">N-Parallel</p>
+            <div className="mt-12 text-center max-w-xl">
+               <h2 className="text-2xl font-bold text-slate-800 dark:text-slate-100 mb-2">Start Your Stock Workflow</h2>
+               <p className="text-sm text-slate-500 dark:text-slate-400 mb-8">Professional AI-powered metadata generation for stock assets</p>
+               <div className="grid grid-cols-3 gap-6 mb-8">
+                  <div className="space-y-2 p-4 rounded-xl bg-gradient-to-br from-blue-50 to-indigo-50 dark:from-blue-900/20 dark:to-indigo-900/20 border border-blue-100 dark:border-blue-900/20">
+                    <div className="text-3xl mb-2">⚡</div>
+                    <p className="text-xs uppercase font-bold tracking-widest text-blue-700 dark:text-blue-300">Fast Processing</p>
+                    <p className="text-[10px] text-blue-600/70 dark:text-blue-400/70">Optimized API usage</p>
                   </div>
-                  <div className="space-y-2">
-                    <div className="text-2xl">🎯</div>
-                    <p className="text-xs uppercase font-bold tracking-widest">SEO Validated</p>
+                  <div className="space-y-2 p-4 rounded-xl bg-gradient-to-br from-emerald-50 to-teal-50 dark:from-emerald-900/20 dark:to-teal-900/20 border border-emerald-100 dark:border-emerald-900/20">
+                    <div className="text-3xl mb-2">🎯</div>
+                    <p className="text-xs uppercase font-bold tracking-widest text-emerald-700 dark:text-emerald-300">SEO Optimized</p>
+                    <p className="text-[10px] text-emerald-600/70 dark:text-emerald-400/70">70 keywords per asset</p>
                   </div>
-                  <div className="space-y-2">
-                    <div className="text-2xl">📁</div>
-                    <p className="text-xs uppercase font-bold tracking-widest">Batch ZIP</p>
+                  <div className="space-y-2 p-4 rounded-xl bg-gradient-to-br from-purple-50 to-pink-50 dark:from-purple-900/20 dark:to-pink-900/20 border border-purple-100 dark:border-purple-900/20">
+                    <div className="text-3xl mb-2">📁</div>
+                    <p className="text-xs uppercase font-bold tracking-widest text-purple-700 dark:text-purple-300">Folder Mode</p>
+                    <p className="text-[10px] text-purple-600/70 dark:text-purple-400/70">Direct file access</p>
                   </div>
                </div>
                {apiKeys.length === 0 && (
-                 <div className="mt-8 p-4 bg-amber-50 dark:bg-amber-900/20 rounded-2xl border border-amber-100 dark:border-amber-900/20 max-w-md mx-auto">
-                   <p className="text-sm text-amber-800 dark:text-amber-200 mb-2 font-medium">💡 Get Started</p>
-                   <p className="text-xs text-amber-700 dark:text-amber-300 mb-3">Add your Gemini API key in Settings to enable AI-powered metadata generation.</p>
-                   <button
-                     onClick={() => setIsSettingsOpen(true)}
-                     className="text-xs font-medium text-amber-900 dark:text-amber-100 hover:underline inline-flex items-center gap-1"
-                   >
-                     Open Settings
-                     <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5l7 7-7 7" />
+                 <div className="mt-8 p-5 bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-900/20 dark:to-indigo-900/20 rounded-xl border border-blue-100 dark:border-blue-900/20 shadow-sm">
+                   <div className="flex items-start gap-3 mb-3">
+                     <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-blue-600 dark:text-blue-400 mt-0.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                      </svg>
-                   </button>
+                     <div className="flex-1 text-left">
+                       <p className="text-sm font-semibold text-blue-900 dark:text-blue-100 mb-1">No API Keys Configured</p>
+                       <p className="text-xs text-blue-700 dark:text-blue-300 mb-4">Add your Google Gemini API key(s) in settings to start processing files. Your keys are stored securely in your browser.</p>
+                       <button 
+                         onClick={() => setIsSettingsOpen(true)}
+                         className="px-5 py-2.5 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-all shadow-sm hover:shadow-md"
+                       >
+                         Open Settings
+                       </button>
+                     </div>
+                   </div>
                  </div>
                )}
             </div>
@@ -954,22 +968,54 @@ function App() {
             )}
 
             {/* Preview Loading Progress for folders */}
-            {files.length >= 20 && previewLoadProgress.total > 0 && previewLoadProgress.loaded < previewLoadProgress.total && (
-              <div className="mb-4 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-xl border border-blue-100 dark:border-blue-900/20">
+            {previewLoadProgress.total > 0 && previewLoadProgress.loaded < previewLoadProgress.total && (
+              <div className="mb-4 p-4 bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-900/20 dark:to-indigo-900/20 rounded-xl border border-blue-100 dark:border-blue-900/20 shadow-sm">
                 <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs font-medium text-blue-700 dark:text-blue-300">
-                    Loading previews...
-                  </span>
-                  <span className="text-xs text-blue-600 dark:text-blue-400">
+                  <div className="flex items-center gap-2">
+                    <div className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+                    <span className="text-sm font-medium text-blue-700 dark:text-blue-300">
+                      Loading previews...
+                    </span>
+                  </div>
+                  <span className="text-sm font-semibold text-blue-600 dark:text-blue-400">
                     {previewLoadProgress.loaded} / {previewLoadProgress.total}
                   </span>
                 </div>
-                <div className="w-full h-2 bg-blue-100 dark:bg-blue-900/40 rounded-full overflow-hidden">
+                <div className="w-full bg-blue-200/50 dark:bg-blue-900/50 rounded-full h-2 overflow-hidden">
                   <div 
-                    className="h-full bg-blue-500 transition-all duration-300"
-                    style={{ width: `${(previewLoadProgress.loaded / previewLoadProgress.total) * 100}%` }}
+                    className="bg-gradient-to-r from-blue-500 to-indigo-500 h-2 rounded-full transition-all duration-500 ease-out shadow-sm" 
+                    style={{ width: `${(previewLoadProgress.loaded / previewLoadProgress.total) * 100}%` }} 
                   />
                 </div>
+                <p className="text-xs text-blue-600/70 dark:text-blue-400/70 mt-2">
+                  {Math.round((previewLoadProgress.loaded / previewLoadProgress.total) * 100)}% complete
+                </p>
+              </div>
+            )}
+            
+            {/* Processing Progress Indicator */}
+            {isQueueActive && processingCount > 0 && (
+              <div className="mb-4 p-4 bg-gradient-to-r from-brand-50 to-emerald-50 dark:from-brand-900/20 dark:to-emerald-900/20 rounded-xl border border-brand-100 dark:border-brand-900/20 shadow-sm">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-2">
+                    <div className="w-4 h-4 border-2 border-brand-600 border-t-transparent rounded-full animate-spin" />
+                    <span className="text-sm font-medium text-brand-700 dark:text-brand-300">
+                      Processing {processingCount} file{processingCount > 1 ? 's' : ''}...
+                    </span>
+                  </div>
+                  <span className="text-sm font-semibold text-brand-600 dark:text-brand-400">
+                    {files.filter(f => f.status === ProcessingStatus.COMPLETED).length} / {files.length} completed
+                  </span>
+                </div>
+                <div className="w-full bg-brand-200/50 dark:bg-brand-900/50 rounded-full h-2 overflow-hidden">
+                  <div 
+                    className="bg-gradient-to-r from-brand-500 to-emerald-500 h-2 rounded-full transition-all duration-500 ease-out shadow-sm" 
+                    style={{ width: `${files.length > 0 ? (files.filter(f => f.status === ProcessingStatus.COMPLETED).length / files.length) * 100 : 0}%` }} 
+                  />
+                </div>
+                <p className="text-xs text-brand-600/70 dark:text-brand-400/70 mt-2">
+                  {files.length > 0 ? Math.round((files.filter(f => f.status === ProcessingStatus.COMPLETED).length / files.length) * 100) : 0}% complete • {files.filter(f => f.status === ProcessingStatus.PENDING).length} remaining
+                </p>
               </div>
             )}
 
@@ -1125,6 +1171,8 @@ function App() {
            const newPrompts = { ...styleMemory.customProfilePrompts, [profile]: prompt };
            handleUpdateStyleMemory({ customProfilePrompts: newPrompts as any });
         }}
+        selectedModel={styleMemory.selectedModel || 'auto'}
+        onSelectModel={(model) => handleUpdateStyleMemory({ selectedModel: model })}
       />
     </div>
   );

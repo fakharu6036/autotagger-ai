@@ -50,15 +50,19 @@ const METADATA_SCHEMA = {
 // Models ordered by free tier access (best first)
 // Note: Model names may differ between v1 and v1beta APIs
 // Try listing models first, then fall back to known working names
+// gemini-2.5-flash doesn't exist - using correct model names
 const AVAILABLE_MODELS = [
-  'gemini-1.5-flash-001',    // Specific version that works with v1
+  'gemini-1.5-flash',        // Most widely available
+  'gemini-1.5-flash-001',    // Specific version
+  'gemini-1.5-pro',          // Pro version
   'gemini-1.5-pro-001',      // Specific pro version
   'gemini-pro',              // Legacy model
-  'models/gemini-1.5-flash', // Full path format
-  'models/gemini-pro',       // Full path format
 ];
 
 export class GeminiService {
+  private modelCache: Map<string, { models: string[]; timestamp: number }> = new Map();
+  private readonly CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
+
   private getBestModel(): string {
     // Return the model with best free tier access
     // Currently gemini-1.5-flash-latest has good free tier limits
@@ -66,6 +70,14 @@ export class GeminiService {
   }
 
   async listAvailableModels(apiKey: string): Promise<string[]> {
+    // Check cache first to avoid repeated API calls
+    const cacheKey = apiKey.trim();
+    const cached = this.modelCache.get(cacheKey);
+    const now = Date.now();
+    
+    if (cached && (now - cached.timestamp) < this.CACHE_DURATION) {
+      return cached.models;
+    }
     try {
       const url = new URL(`${API_BASE_URL}/models`);
       url.searchParams.set('key', apiKey.trim());
@@ -73,7 +85,20 @@ export class GeminiService {
       const response = await fetch(url.toString());
       if (response.ok) {
         const data = await response.json();
-        return (data.models || []).map((m: any) => m.name?.replace('models/', '') || m.name).filter(Boolean);
+        const models = (data.models || [])
+          .map((m: any) => m.name?.replace('models/', '') || m.name)
+          .filter(Boolean)
+          // Filter out invalid/non-existent models
+          .filter((name: string) => {
+            // Only allow known valid model patterns
+            return name.includes('gemini-1.5') || 
+                   name.includes('gemini-pro') || 
+                   name.includes('gemini-1.0');
+            // Explicitly exclude invalid models like gemini-2.5-flash
+          });
+        // Cache the results
+        this.modelCache.set(cacheKey, { models, timestamp: now });
+        return models;
       }
     } catch (e) {
       console.warn('Failed to list models:', e);
@@ -161,7 +186,8 @@ export class GeminiService {
     data: { base64?: string, frames?: string[], mimeType: string },
     profile: GenerationProfile,
     styleMemory: StyleMemory,
-    isVariant: boolean = false
+    isVariant: boolean = false,
+    preferredModel?: string
   ): Promise<Metadata> {
     const memoryInstruction = styleMemory.rejectedKeywords.length > 0 
       ? `Avoid these previously rejected terms: [${styleMemory.rejectedKeywords.slice(-20).join(', ')}].`
@@ -178,20 +204,45 @@ export class GeminiService {
     const variantModifier = isVariant ? "Provide a fresh perspective focusing on different details." : "";
 
     const promptParts: any[] = [
-      { text: `Profile: ${profile}. Instruction: ${profileInstruction} ${variantModifier}
-      
-      Generate a total of 70 keywords (50 primary + 20 backup). 
-      The primary 50 must cover: Subject, Environment, Action, Lighting, and Conceptual Mood.
-      The backup 20 should offer alternative synonyms or secondary associations.
-      
-      ${memoryInstruction}` }
+      { text: `You are an expert stock photography metadata generator. Analyze this image/video and generate comprehensive, SEO-optimized metadata.
+
+Profile: ${profile}
+Style Guide: ${profileInstruction}
+${variantModifier}
+
+REQUIREMENTS:
+1. Title: Create a compelling, SEO-optimized title (max 180 characters) that accurately describes the content and includes key search terms.
+
+2. Description: Write a detailed, professional description (2-4 sentences) that:
+   - Clearly describes what's in the image/video
+   - Includes relevant context, setting, and mood
+   - Uses natural language that's both descriptive and keyword-rich
+   - Avoids generic phrases, be specific
+
+3. Keywords: Generate exactly 70 keywords total:
+   - 50 PRIMARY keywords covering: Main Subject, Secondary Subjects, Environment/Setting, Action/Activity, Lighting Conditions, Time of Day, Mood/Emotion, Style/Aesthetic, Colors, Composition Elements
+   - 20 BACKUP keywords: Alternative terms, synonyms, related concepts, and secondary associations
+   - Prioritize specific, searchable terms over generic ones
+   - Include both broad and niche keywords
+
+4. Category: Assign the most appropriate stock photography category (e.g., "Lifestyle", "Business", "Nature", "Technology", etc.)
+
+5. Rejection Risks: Identify any potential issues such as:
+   - Trademarked items or logos
+   - Recognizable people without releases
+   - Copyright concerns
+   - Quality issues
+   - Policy violations
+
+${memoryInstruction}
+
+Generate comprehensive metadata that maximizes discoverability while maintaining accuracy and professionalism.` }
     ];
 
     if (data.frames && data.frames.length > 0) {
-      data.frames.forEach((f) => {
-        promptParts.push({ inlineData: { data: f, mimeType: 'image/jpeg' } });
-      });
-      promptParts.push({ text: "The frames are from one video. Synthesize into one coherent metadata set." });
+      // Use only the first frame to reduce API payload - single frame is sufficient
+      promptParts.push({ inlineData: { data: data.frames[0], mimeType: 'image/jpeg' } });
+      promptParts.push({ text: "This is a representative frame from a video. Generate comprehensive metadata that covers the entire video content." });
     } else if (data.base64) {
       promptParts.push({ inlineData: { data: data.base64, mimeType: data.mimeType } });
     }
@@ -207,7 +258,18 @@ export class GeminiService {
     } catch (e) {
       // If listing fails, use fallback models
     }
-    const modelsToTry = availableModels.length > 0 ? availableModels : AVAILABLE_MODELS;
+    
+    // If user has selected a specific model (not 'auto'), prioritize it
+    let modelsToTry: string[] = [];
+    if (preferredModel && preferredModel !== 'auto') {
+      // User selected a specific model - try it first, then fallback
+      modelsToTry = [preferredModel, ...(availableModels.length > 0 ? availableModels : AVAILABLE_MODELS)];
+      // Remove duplicates
+      modelsToTry = [...new Set(modelsToTry)];
+    } else {
+      // Auto mode - use available models or fallback
+      modelsToTry = availableModels.length > 0 ? availableModels : AVAILABLE_MODELS;
+    }
     
     for (const model of modelsToTry) {
       try {
@@ -246,6 +308,14 @@ export class GeminiService {
             errMsg.toLowerCase().includes('too many requests') ||
             errMsg.toLowerCase().includes('quota exceeded');
           
+          // 400 Bad Request usually means invalid model name
+          const isInvalidModel = statusCode === 400 && (
+            errMsg.toLowerCase().includes('invalid model') ||
+            errMsg.toLowerCase().includes('not found') ||
+            errMsg.toLowerCase().includes('bad request') ||
+            !errMsg.toLowerCase().includes('api key') // If it's 400 but not about API key, it's likely invalid model
+          );
+          
           // 404 can mean model not found OR quota exceeded (API key disabled)
           const isModelNotFound = statusCode === 404 || 
             errMsg.toLowerCase().includes('not found') || 
@@ -254,9 +324,10 @@ export class GeminiService {
             errMsg.toLowerCase().includes('permission denied') ||
             errMsg.toLowerCase().includes('api key not valid');
           
-          if (isRateLimit || isModelNotFound) {
+          if (isRateLimit || isModelNotFound || isInvalidModel) {
             lastError = { message: errMsg, status: statusCode, statusCode };
-            console.warn(`Model ${model} unavailable (${isRateLimit ? 'rate limit' : 'not found/disabled'}), trying next...`);
+            const reason = isRateLimit ? 'rate limit' : isInvalidModel ? 'invalid model' : 'not found/disabled';
+            console.warn(`Model ${modelName} unavailable (${reason}), trying next...`);
             continue; // Try next model
           }
           

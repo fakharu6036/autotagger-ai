@@ -11,7 +11,18 @@ interface SettingsModalProps {
   onResetQuota?: (id: string) => void;
   customProfilePrompts: Record<GenerationProfile, string>;
   onUpdateProfilePrompt: (profile: GenerationProfile, prompt: string) => void;
+  selectedModel?: string;
+  onSelectModel: (model: string) => void;
 }
+
+const AVAILABLE_MODELS = [
+  { value: 'gemini-1.5-flash', label: 'Gemini 1.5 Flash', description: 'Fast and efficient, best for most use cases. Good free tier limits.' },
+  { value: 'gemini-1.5-flash-001', label: 'Gemini 1.5 Flash (v001)', description: 'Specific version of Flash model for stability.' },
+  { value: 'gemini-1.5-pro', label: 'Gemini 1.5 Pro', description: 'More powerful model with better understanding. Higher quality results.' },
+  { value: 'gemini-1.5-pro-001', label: 'Gemini 1.5 Pro (v001)', description: 'Specific version of Pro model for stability.' },
+  { value: 'gemini-pro', label: 'Gemini Pro', description: 'Legacy model, widely available but older version.' },
+  { value: 'auto', label: 'Auto (Recommended)', description: 'Automatically select the best available model for your API key.' },
+];
 
 const SettingsModal: React.FC<SettingsModalProps> = ({ 
   isOpen, 
@@ -21,9 +32,11 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
   onRemoveKey,
   onResetQuota,
   customProfilePrompts,
-  onUpdateProfilePrompt
+  onUpdateProfilePrompt,
+  selectedModel = 'auto',
+  onSelectModel
 }) => {
-  const [activeTab, setActiveTab] = useState<'keys' | 'profiles'>('keys');
+  const [activeTab, setActiveTab] = useState<'keys' | 'profiles' | 'model'>('keys');
   const [newKey, setNewKey] = useState('');
   const [newLabel, setNewLabel] = useState('');
   const [isTesting, setIsTesting] = useState(false);
@@ -72,6 +85,13 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
           >
             API Keys
             {activeTab === 'keys' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-brand-600 rounded-full" />}
+          </button>
+          <button
+            onClick={() => setActiveTab('model')}
+            className={`pb-3 px-1 mr-8 text-sm font-medium transition-all relative ${activeTab === 'model' ? 'text-brand-600' : 'text-slate-500 hover:text-slate-700'}`}
+          >
+            Model
+            {activeTab === 'model' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-brand-600 rounded-full" />}
           </button>
           <button
             onClick={() => setActiveTab('profiles')}
@@ -186,6 +206,61 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                   </div>
                 </div>
               )}
+            </div>
+          ) : activeTab === 'model' ? (
+            <div className="space-y-6">
+              <div className="p-5 bg-blue-50 dark:bg-blue-900/20 rounded-2xl border border-blue-100 dark:border-blue-900/20">
+                <div className="flex items-start gap-3">
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-blue-600 dark:text-blue-400 mt-0.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <div className="flex-1">
+                    <p className="text-sm font-medium text-blue-900 dark:text-blue-100 mb-2">Select Gemini Model</p>
+                    <p className="text-xs text-blue-700 dark:text-blue-300">
+                      Choose which Gemini model to use for metadata generation. "Auto" will automatically select the best available model for your API key. 
+                      Flash models are faster and more cost-effective, while Pro models offer higher quality results.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-3">
+                <label className="text-xs font-bold text-slate-400 uppercase tracking-widest ml-1">Model Selection</label>
+                <div className="space-y-2">
+                  {AVAILABLE_MODELS.map((model) => (
+                    <label
+                      key={model.value}
+                      className={`flex items-start gap-3 p-4 rounded-xl border-2 cursor-pointer transition-all ${
+                        selectedModel === model.value
+                          ? 'border-brand-500 bg-brand-50 dark:bg-brand-900/20'
+                          : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:border-slate-300 dark:hover:border-slate-600'
+                      }`}
+                    >
+                      <input
+                        type="radio"
+                        name="model"
+                        value={model.value}
+                        checked={selectedModel === model.value}
+                        onChange={() => onSelectModel(model.value)}
+                        className="mt-1 h-4 w-4 text-brand-600 focus:ring-brand-500"
+                      />
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="text-sm font-medium text-slate-900 dark:text-slate-100">
+                            {model.label}
+                          </span>
+                          {selectedModel === model.value && (
+                            <span className="text-xs px-2 py-0.5 bg-brand-600 text-white rounded-full">Active</span>
+                          )}
+                        </div>
+                        <p className="text-xs text-slate-500 dark:text-slate-400">
+                          {model.description}
+                        </p>
+                      </div>
+                    </label>
+                  ))}
+                </div>
+              </div>
             </div>
           ) : (
             <div className="space-y-6">

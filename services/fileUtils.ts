@@ -101,25 +101,9 @@ export const getVideoFrames = (file: File): Promise<{ previewUrl: string, frames
     video.onloadeddata = () => {
       const duration = video.duration;
       
-      // Strategic frame capture: 2-3 frames for better AI context
-      // 1. Early frame (2s) - subject establishment
-      // 2. Midpoint - action/transition
-      // 3. Near end (if video is long enough) - conclusion
-      const framePoints: number[] = [];
-      
-      if (duration > 10) {
-        // Long video: capture 3 frames
-        framePoints.push(Math.min(2, duration * 0.1)); // Early (2s or 10%)
-        framePoints.push(duration * 0.5); // Middle
-        framePoints.push(duration * 0.9); // Near end
-      } else if (duration > 3) {
-        // Medium video: capture 2 frames
-        framePoints.push(Math.min(2, duration * 0.2)); // Early (2s or 20%)
-        framePoints.push(duration * 0.7); // Later
-      } else {
-        // Short video: just 1 frame at midpoint
-        framePoints.push(duration * 0.5);
-      }
+      // Optimized: Use single representative frame to reduce API payload
+      // Single frame is sufficient for metadata generation and reduces API costs
+      const framePoints: number[] = [duration * 0.3]; // Capture at 30% - good representative point
 
       let currentFrameIndex = 0;
       

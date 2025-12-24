@@ -525,11 +525,42 @@ Return ONLY the JSON object.` }
               : 'Billing or quota issue. Please check your Google Cloud Console.');
           }
           
-          // If it's a rate limit error, try next model
+          // If it's a rate limit error, extract retry-after time and wait
           const isRateLimit = statusCode === 429 || 
             errMsg.includes('429') || 
             lowerMsg.includes('rate limit') ||
-            lowerMsg.includes('too many requests');
+            lowerMsg.includes('too many requests') ||
+            lowerMsg.includes('exceeded your current quota');
+          
+          if (isRateLimit) {
+            // Extract retry-after time from error message (e.g., "Please retry in 8.431675204s")
+            let retryAfterSeconds = 10; // Default 10 seconds
+            const retryMatch = errMsg.match(/retry in ([\d.]+)s/i);
+            if (retryMatch && retryMatch[1]) {
+              retryAfterSeconds = Math.ceil(parseFloat(retryMatch[1])) + 2; // Add 2 seconds buffer
+            }
+            
+            // Also check Retry-After header if available
+            const retryAfterHeader = response.headers.get('Retry-After');
+            if (retryAfterHeader) {
+              retryAfterSeconds = Math.max(retryAfterSeconds, parseInt(retryAfterHeader) || 10);
+            }
+            
+            lastError = { message: errMsg, status: statusCode, statusCode };
+            console.warn(`Model ${modelName} rate limited. Waiting ${retryAfterSeconds}s before trying next model...`);
+            
+            // Wait before trying next model to avoid hitting rate limits on all models
+            await new Promise(resolve => setTimeout(resolve, retryAfterSeconds * 1000));
+            
+            // If this is the last model or we've tried too many, throw error
+            const modelIndex = modelsToTry.indexOf(model);
+            if (modelIndex >= modelsToTry.length - 1 || modelIndex >= 2) {
+              // Don't try more than 3 models to avoid cascading rate limits
+              throw new QuotaExceededInternal();
+            }
+            
+            continue; // Try next model after delay
+          }
           
           // 400 Bad Request - treat as API key issue if it's the first model
           // Most 400 errors from Gemini API are API key related, not model-specific
@@ -548,12 +579,6 @@ Return ONLY the JSON object.` }
           const isModelNotFound = statusCode === 404 && 
             !lowerMsg.includes('api key') &&
             !lowerMsg.includes('permission');
-          
-          if (isRateLimit) {
-            lastError = { message: errMsg, status: statusCode, statusCode };
-            console.warn(`Model ${modelName} rate limited, trying next...`);
-            continue; // Try next model for rate limits
-          }
           
           if (isModelNotFound) {
             // Only try next model if it's clearly a model not found issue

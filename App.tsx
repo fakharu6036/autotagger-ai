@@ -367,8 +367,6 @@ function App() {
         setProcessingProgress({ loaded: completed, total: updated.length });
         return updated;
       });
-      // Auto-select the currently processing file to show in sidebar
-      setSidebarFileId(item.id);
 
       // Get file for processing (either from handle or existing file object)
       let processingFile: File;
@@ -580,36 +578,6 @@ function App() {
     } finally {
       activeProcessingIds.current.delete(item.id);
       setProcessingCount(p => Math.max(0, p - 1));
-      
-      // Auto-select the next processing file when current one completes
-      if (isQueueActive) {
-        // Use setTimeout to ensure state is updated
-        setTimeout(() => {
-          setFiles(currentFiles => {
-            const nextProcessing = currentFiles.find(f => 
-              f.status === ProcessingStatus.PROCESSING && 
-              f.id !== item.id
-            );
-            if (nextProcessing) {
-              setSidebarFileId(nextProcessing.id);
-            } else {
-              // If no file is currently processing, select the next pending file
-              const nextPending = currentFiles.find(f => 
-                f.status === ProcessingStatus.PENDING
-              );
-              if (nextPending) {
-                // Will be selected when it starts processing
-              } else {
-                // No more files to process, keep sidebar open with last completed file
-                if (item.status === ProcessingStatus.COMPLETED) {
-                  setSidebarFileId(item.id);
-                }
-              }
-            }
-            return currentFiles;
-          });
-        }, 100);
-      }
     }
   }, [currentProfile, styleMemory, getNextAvailableKeySlot, updateKeySlotTiming]);
 

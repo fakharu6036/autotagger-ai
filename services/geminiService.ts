@@ -165,6 +165,54 @@ export class GeminiService {
     return [];
   }
 
+  async testApiModelCombination(apiKey: string, model: string): Promise<boolean> {
+    try {
+      const modelName = model.replace(/^models\//, '');
+      const url = new URL(`${API_BASE_URL}/models/${modelName}:generateContent`);
+      url.searchParams.set('key', apiKey.trim());
+      
+      const response = await fetch(url.toString(), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          contents: [{
+            parts: [{ text: 'test' }]
+          }]
+        })
+      });
+
+      if (response.ok) {
+        return true;
+      }
+
+      const errorData = await response.json().catch(() => ({}));
+      const statusCode = response.status;
+      const errMsg = errorData.error?.message || '';
+
+      // If it's a quota/rate limit error, this combination is temporarily unavailable
+      const isQuotaError = statusCode === 429 || 
+        errMsg.toLowerCase().includes('quota') || 
+        errMsg.toLowerCase().includes('rate limit') ||
+        errMsg.toLowerCase().includes('too many requests');
+      
+      if (isQuotaError) {
+        return false; // Rate limited, but combination might work later
+      }
+
+      // If it's an invalid API key error, this combination won't work
+      if (statusCode === 400 && (errMsg.toLowerCase().includes('api key') || errMsg.toLowerCase().includes('invalid'))) {
+        return false;
+      }
+
+      // Other errors might be temporary
+      return false;
+    } catch (e: any) {
+      return false;
+    }
+  }
+
   async testKey(apiKey: string): Promise<boolean> {
     // Validate API key format
     const trimmedKey = apiKey.trim();

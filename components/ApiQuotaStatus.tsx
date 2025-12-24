@@ -4,9 +4,10 @@ import { ApiKeyRecord } from '../types';
 interface ApiQuotaStatusProps {
   apiKeys: ApiKeyRecord[];
   onResetQuota: (id: string) => void;
+  allApisExhausted?: boolean;
 }
 
-const ApiQuotaStatus: React.FC<ApiQuotaStatusProps> = ({ apiKeys, onResetQuota }) => {
+const ApiQuotaStatus: React.FC<ApiQuotaStatusProps> = ({ apiKeys, onResetQuota, allApisExhausted = false }) => {
   const [currentTime, setCurrentTime] = useState(Date.now());
 
   useEffect(() => {
@@ -35,7 +36,8 @@ const ApiQuotaStatus: React.FC<ApiQuotaStatusProps> = ({ apiKeys, onResetQuota }
     return Math.min(100, (used / limit) * 100);
   };
 
-  const getQuotaColor = (percentage: number): string => {
+  const getQuotaColor = (percentage: number, isExhausted: boolean): string => {
+    if (allApisExhausted || isExhausted) return 'bg-rose-500';
     if (percentage >= 90) return 'bg-rose-500';
     if (percentage >= 75) return 'bg-amber-500';
     return 'bg-emerald-500';
@@ -49,10 +51,16 @@ const ApiQuotaStatus: React.FC<ApiQuotaStatusProps> = ({ apiKeys, onResetQuota }
         const used = key.requestCount || 0;
         const isCooldown = key.status === 'cooldown' || (key.cooldownUntil && currentTime < key.cooldownUntil);
         
+        const isExhausted = allApisExhausted || (key.status === 'cooldown' && currentTime < (key.cooldownUntil || 0));
+        
         return (
           <div 
             key={key.id} 
-            className="flex items-center gap-2 px-3 py-1.5 bg-slate-50 dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 group"
+            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border group ${
+              allApisExhausted || isExhausted
+                ? 'bg-rose-50 dark:bg-rose-900/20 border-rose-200 dark:border-rose-900/40'
+                : 'bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700'
+            }`}
             title={`${key.label}: ${used}/${limit} requests - Resets in ${getTimeUntilReset(key.quotaResetAt)}`}
           >
             <div className="flex flex-col min-w-[120px]">
@@ -82,7 +90,7 @@ const ApiQuotaStatus: React.FC<ApiQuotaStatusProps> = ({ apiKeys, onResetQuota }
               </div>
               <div className="w-full h-1.5 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
                 <div 
-                  className={`h-full transition-all duration-300 ${getQuotaColor(percentage)}`}
+                  className={`h-full transition-all duration-300 ${getQuotaColor(percentage, isExhausted)}`}
                   style={{ width: `${percentage}%` }}
                 />
               </div>

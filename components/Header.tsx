@@ -24,6 +24,7 @@ interface HeaderProps {
   onResetQuota: (id: string) => void;
   totalDailyQuota: { used: number; limit: number; remaining: number; percentage: number };
   processingProgress: { loaded: number; total: number };
+  allApisExhausted?: boolean;
 }
 
 const Header: React.FC<HeaderProps> = ({ 
@@ -42,6 +43,7 @@ const Header: React.FC<HeaderProps> = ({
   onResetQuota,
   totalDailyQuota,
   processingProgress,
+  allApisExhausted = false,
 }) => {
   const [isExportMenuOpen, setIsExportMenuOpen] = useState(false);
   const allCompleted = totalFiles > 0 && completedFiles === totalFiles;
@@ -169,7 +171,7 @@ const Header: React.FC<HeaderProps> = ({
           </div>
           
           {/* Individual API Key Quotas */}
-          <ApiQuotaStatus apiKeys={apiKeys} onResetQuota={onResetQuota} />
+          <ApiQuotaStatus apiKeys={apiKeys} onResetQuota={onResetQuota} allApisExhausted={allApisExhausted} />
         </div>
       )}
       

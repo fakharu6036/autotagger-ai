@@ -43,6 +43,9 @@ function App() {
   const [searchQuery, setSearchQuery] = useState('');
   const [csvFilename, setCsvFilename] = useState<string>('pitagger_export.csv');
   const [processingProgress, setProcessingProgress] = useState({ loaded: 0, total: 0 });
+  const [workingApiModel, setWorkingApiModel] = useState<{ apiKeyId: string; model: string } | null>(null);
+  const [allApisExhausted, setAllApisExhausted] = useState(false);
+  const [apiModelTestResults, setApiModelTestResults] = useState<Map<string, { apiKeyId: string; model: string; works: boolean }>>(new Map());
 
   const activeProcessingIds = useRef<Set<string>>(new Set());
   const GEMINI_FREE_TIER_LIMIT = REQUESTS_PER_MINUTE; // Conservative limit to avoid 429 errors
@@ -397,17 +400,28 @@ function App() {
         payload = { base64: await readFileAsBase64ForAPI(processingFile), mimeType: processingFile.type };
       }
 
-      let currentKeySlot = keySlot;
+      // Use working API+model combination, or find a new one
+      let currentKeySlot = workingApiModel 
+        ? apiKeys.find(k => k.id === workingApiModel.apiKeyId) || keySlot
+        : keySlot;
+      let currentModel = workingApiModel?.model || styleMemory.selectedModel || 'auto';
       let apiKey = currentKeySlot.key;
       
       let metadata;
       let retries = 0;
-      const maxRetries = 3;
+      const maxRetries = 5; // Increased to allow more API+model combinations
+      let triedApiModelCombinations = new Set<string>();
       
       while (retries < maxRetries) {
         try {
-          metadata = await geminiService.generateMetadata(apiKey, payload, currentProfile, styleMemory, false, styleMemory.selectedModel);
+          metadata = await geminiService.generateMetadata(apiKey, payload, currentProfile, styleMemory, false, currentModel);
           updateKeySlotTiming(currentKeySlot.id);
+          
+          // Update working combination
+          if (!workingApiModel || workingApiModel.apiKeyId !== currentKeySlot.id || workingApiModel.model !== currentModel) {
+            setWorkingApiModel({ apiKeyId: currentKeySlot.id, model: currentModel });
+          }
+          
           // Add delay after successful request to respect rate limits
           await new Promise(resolve => setTimeout(resolve, MIN_SAFE_INTERVAL_MS));
           break; // Success, exit retry loop
@@ -416,30 +430,52 @@ function App() {
                              (e.message && (e.message.includes('429') || e.message.toLowerCase().includes('quota') || e.message.toLowerCase().includes('rate limit')));
           
           if (isRateLimit) {
-            // Rate limited - update timing and retry with backoff
+            // Mark this API+model combination as tried
+            triedApiModelCombinations.add(`${currentKeySlot.id}:${currentModel}`);
+            
+            // Rate limited - try next model with same API, then next API
             updateKeySlotTiming(currentKeySlot.id, true);
             retries++;
+            
             if (retries < maxRetries) {
-              // Exponential backoff: 2s, 4s, 8s
-              const backoffMs = Math.min(8000, 2000 * Math.pow(2, retries - 1));
-              await new Promise(resolve => setTimeout(resolve, backoffMs));
-              // Get a new key slot after backoff
-              const newKeySlot = getNextAvailableKeySlot();
-              if (newKeySlot) {
-                currentKeySlot = newKeySlot;
-                apiKey = newKeySlot.key;
-              } else {
-                // No available keys, wait longer
-                await new Promise(resolve => setTimeout(resolve, 10000));
-                const retryKeySlot = getNextAvailableKeySlot();
-                if (retryKeySlot) {
-                  currentKeySlot = retryKeySlot;
-                  apiKey = retryKeySlot.key;
-                } else {
-                  throw new QuotaExceededInternal();
-                }
+              // Try next model with current API
+              let availableModels: string[] = [];
+              try {
+                availableModels = await geminiService.listAvailableModels(apiKey);
+              } catch (err) {
+                availableModels = ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-pro'];
               }
+              
+              const currentModelIndex = availableModels.indexOf(currentModel);
+              const nextModel = availableModels[currentModelIndex + 1];
+              
+              if (nextModel && !triedApiModelCombinations.has(`${currentKeySlot.id}:${nextModel}`)) {
+                currentModel = nextModel;
+                console.log(`Trying next model: ${nextModel} with API ${currentKeySlot.label}`);
+                await new Promise(resolve => setTimeout(resolve, 2000));
+                continue;
+              }
+              
+              // No more models for this API, try next API
+              const currentApiIndex = apiKeys.findIndex(k => k.id === currentKeySlot.id);
+              const nextApi = apiKeys[currentApiIndex + 1];
+              
+              if (nextApi) {
+                currentKeySlot = nextApi;
+                apiKey = nextApi.key;
+                currentModel = availableModels[0] || 'auto';
+                console.log(`Trying next API: ${nextApi.label} with model ${currentModel}`);
+                await new Promise(resolve => setTimeout(resolve, 2000));
+                continue;
+              }
+              
+              // All APIs exhausted
+              setAllApisExhausted(true);
+              setWorkingApiModel(null);
+              throw new QuotaExceededInternal();
             } else {
+              setAllApisExhausted(true);
+              setWorkingApiModel(null);
               throw new QuotaExceededInternal();
             }
           } else {
@@ -579,7 +615,58 @@ function App() {
       activeProcessingIds.current.delete(item.id);
       setProcessingCount(p => Math.max(0, p - 1));
     }
-  }, [currentProfile, styleMemory, getNextAvailableKeySlot, updateKeySlotTiming]);
+  }, [currentProfile, styleMemory, getNextAvailableKeySlot, updateKeySlotTiming, workingApiModel, apiKeys]);
+
+  // Test all API+model combinations to find working ones
+  const testAllApiModelCombinations = useCallback(async () => {
+    if (apiKeys.length === 0) return;
+    
+    setToast({ message: "Testing API keys and models...", type: "success" });
+    const results = new Map<string, { apiKeyId: string; model: string; works: boolean }>();
+    
+    // Get available models for first API key (they should be similar across keys)
+    let availableModels: string[] = [];
+    try {
+      availableModels = await geminiService.listAvailableModels(apiKeys[0].key);
+    } catch (e) {
+      console.warn('Failed to list models:', e);
+      // Use fallback models
+      availableModels = ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-pro'];
+    }
+    
+    // Test each API key with each model
+    for (const apiKey of apiKeys) {
+      for (const model of availableModels) {
+        const key = `${apiKey.id}:${model}`;
+        try {
+          const works = await geminiService.testApiModelCombination(apiKey.key, model);
+          results.set(key, { apiKeyId: apiKey.id, model, works });
+          if (works && !workingApiModel) {
+            // Found first working combination
+            setWorkingApiModel({ apiKeyId: apiKey.id, model });
+            console.log(`Found working combination: ${apiKey.label} + ${model}`);
+            break; // Use this for now
+          }
+        } catch (e) {
+          results.set(key, { apiKeyId: apiKey.id, model, works: false });
+        }
+      }
+      if (workingApiModel) break; // Found working combination, stop testing
+    }
+    
+    setApiModelTestResults(results);
+    
+    if (!workingApiModel) {
+      setAllApisExhausted(true);
+      setToast({ 
+        message: "All API keys are rate-limited. Please wait or reset quotas.", 
+        type: "error" 
+      });
+    } else {
+      setAllApisExhausted(false);
+      setToast({ message: `Using ${apiKeys.find(k => k.id === workingApiModel.apiKeyId)?.label} with ${workingApiModel.model}`, type: "success" });
+    }
+  }, [apiKeys, workingApiModel]);
 
   const handleSelectFolder = async () => {
     try {
@@ -944,12 +1031,17 @@ function App() {
         processingFiles={processingCount}
         pendingFiles={files.filter(f => f.status === ProcessingStatus.PENDING).length}
         isQueueActive={isQueueActive}
-        onStartQueue={() => {
+        onStartQueue={async () => {
           if (apiKeys.length === 0) {
             setToast({ message: "Add an API Key in settings to start processing.", type: "error" });
             setIsSettingsOpen(true);
             return;
           }
+          
+          // Test all API+model combinations before starting
+          setToast({ message: "Testing API keys and models...", type: "success" });
+          await testAllApiModelCombinations();
+          
           setIsQueueActive(true);
         }}
         onStopQueue={() => setIsQueueActive(false)}
@@ -990,6 +1082,7 @@ function App() {
         onResetQuota={handleResetQuota}
         totalDailyQuota={getTotalDailyQuotaRemaining()}
         processingProgress={processingProgress}
+        allApisExhausted={allApisExhausted}
       />
 
       <main className="flex-1 px-4 lg:px-12 py-8 max-w-[1920px] mx-auto w-full">
@@ -1338,7 +1431,47 @@ function App() {
         />
       )}
 
-      {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
+            {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
+            
+            {/* All APIs Exhausted Modal */}
+            {allApisExhausted && (
+              <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+                <div className="bg-white dark:bg-slate-900 rounded-3xl shadow-2xl w-full max-w-md p-8 border border-rose-200 dark:border-rose-900/40">
+                  <div className="flex items-center gap-4 mb-4">
+                    <div className="w-12 h-12 bg-rose-100 dark:bg-rose-900/20 rounded-full flex items-center justify-center">
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-rose-600 dark:text-rose-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                      </svg>
+                    </div>
+                    <div>
+                      <h3 className="text-lg font-bold text-slate-900 dark:text-white">All API Keys Exhausted</h3>
+                      <p className="text-sm text-slate-500 dark:text-slate-400">All API keys have reached their rate limits</p>
+                    </div>
+                  </div>
+                  
+                  <div className="mb-6 space-y-2 text-sm text-slate-600 dark:text-slate-300">
+                    <p>• Wait for the cooldown period to expire</p>
+                    <p>• Or manually reset quotas in Settings</p>
+                    <p>• Processing will resume automatically when an API recovers</p>
+                  </div>
+                  
+                  <div className="flex gap-3">
+                    <button
+                      onClick={() => setIsSettingsOpen(true)}
+                      className="flex-1 px-4 py-2.5 bg-brand-600 text-white rounded-xl text-sm font-medium hover:bg-brand-700 transition-colors"
+                    >
+                      Open Settings
+                    </button>
+                    <button
+                      onClick={() => setAllApisExhausted(false)}
+                      className="px-4 py-2.5 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 rounded-xl text-sm font-medium hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
+                    >
+                      Dismiss
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
       
       <SettingsModal 
         isOpen={isSettingsOpen} 

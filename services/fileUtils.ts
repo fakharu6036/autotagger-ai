@@ -310,14 +310,18 @@ export const parseCsvContent = (csvContent: string): Map<string, { title: string
     }
     fields.push(currentField); // Add last field
     
+    // Simplified CSV format: Filename, Title, Tags, Suggestions
     if (fields.length >= 3) {
       const filename = fields[0].trim();
       const title = fields[1].trim();
-      const keywords = fields[2].split(',').map(k => k.trim()).filter(Boolean);
-      const category = fields.length > 3 ? fields[3].trim() : '';
-      const description = fields.length > 5 ? fields[5].trim() : '';
+      // Tags are in field 2, suggestions in field 3 (if present)
+      const tags = fields[2].split(',').map(k => k.trim()).filter(Boolean);
+      const suggestions = fields.length > 3 ? fields[3].split(',').map(k => k.trim()).filter(Boolean) : [];
+      // Combine tags and suggestions for keywords
+      const keywords = [...tags, ...suggestions];
       
-      processed.set(filename, { title, keywords, category, description });
+      // Keep category and description empty for compatibility
+      processed.set(filename, { title, keywords, category: '', description: '' });
     }
   }
   

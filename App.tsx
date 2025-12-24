@@ -482,7 +482,25 @@ function App() {
             }
           }
           
-          // Update CSV file in real-time with the completed file
+          // Update JSON database (backend) with all metadata
+          try {
+            await fileSystemService.updateJsonDatabase(selectedFolder, item.fileName, {
+              originalFilename: originalFilename,
+              newFilename: newFilename,
+              filePath: item.filePath || item.fileName,
+              metadata: {
+                ...metadata,
+                readinessScore,
+                generatedAt: new Date().toISOString()
+              }
+            });
+            console.log(`JSON database updated for file: ${newFilename || item.fileName}`);
+          } catch (jsonError) {
+            console.error('Error updating JSON database:', jsonError);
+            // Continue even if JSON update fails
+          }
+          
+          // Update CSV file in real-time with the completed file (final export format)
           try {
             const csvRow = generateCsvRow({
               ...item,
@@ -495,7 +513,7 @@ function App() {
             console.error('Error updating CSV file:', csvError);
             // Continue even if CSV update fails, but log it
             setToast({ 
-              message: `Warning: CSV update failed for ${item.fileName}. Metadata saved to .pitagger.json file.`, 
+              message: `Warning: CSV update failed for ${item.fileName}. Metadata saved to JSON database.`, 
               type: "error" 
             });
           }
@@ -1304,13 +1322,32 @@ function App() {
                 const updatedFile = files.find(f => f.id === id);
                 if (updatedFile) {
                   const readinessScore = calculateReadinessScore(value, value.rejectionRisks || []);
-                  await fileSystemService.saveMetadataFile(selectedFolder, file.filePath || file.fileName, {
+                  const fullMetadata = {
                     ...value,
                     readinessScore,
                     generatedAt: new Date().toISOString(),
                     originalFilename: file.fileName,
                     newFilename: updatedFile.newFilename || file.fileName
+                  };
+                  
+                  // Save to individual .pitagger.json file
+                  await fileSystemService.saveMetadataFile(selectedFolder, file.filePath || file.fileName, fullMetadata);
+                  
+                  // Update JSON database (backend)
+                  await fileSystemService.updateJsonDatabase(selectedFolder, file.fileName, {
+                    originalFilename: file.fileName,
+                    newFilename: updatedFile.newFilename || file.fileName,
+                    filePath: file.filePath || file.fileName,
+                    metadata: fullMetadata
                   });
+                  
+                  // Update CSV with simplified format
+                  const csvRow = generateCsvRow({
+                    ...updatedFile,
+                    newFilename: updatedFile.newFilename || file.fileName,
+                    metadata: { ...value, readinessScore }
+                  }, PlatformPreset.STANDARD);
+                  await fileSystemService.appendToCsvFile(selectedFolder, csvRow, csvFilename);
                 }
               } catch (error) {
                 console.error('Error saving updated metadata:', error);

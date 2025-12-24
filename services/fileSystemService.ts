@@ -376,6 +376,73 @@ export class FileSystemService {
     }
   }
 
+  async saveJsonDatabase(
+    directoryHandle: FileSystemDirectoryHandle,
+    data: Record<string, any>,
+    filename: string = 'pitagger_data.json'
+  ): Promise<void> {
+    try {
+      const fileHandle = await (directoryHandle as any).getFileHandle(filename, { create: true });
+      const writable = await (fileHandle as any).createWritable();
+      await writable.write(JSON.stringify(data, null, 2));
+      await writable.close();
+    } catch (error) {
+      console.error('Error saving JSON database:', error);
+      throw error;
+    }
+  }
+
+  async readJsonDatabase(
+    directoryHandle: FileSystemDirectoryHandle,
+    filename: string = 'pitagger_data.json'
+  ): Promise<Record<string, any> | null> {
+    try {
+      const fileHandle = await (directoryHandle as any).getFileHandle(filename);
+      const file = await fileHandle.getFile();
+      const text = await file.text();
+      return JSON.parse(text);
+    } catch (e: any) {
+      if (e.name === 'NotFoundError') {
+        return null; // File doesn't exist yet
+      }
+      console.error('Error reading JSON database:', e);
+      return null;
+    }
+  }
+
+  async updateJsonDatabase(
+    directoryHandle: FileSystemDirectoryHandle,
+    filename: string,
+    fileData: {
+      originalFilename: string;
+      newFilename: string;
+      metadata: any;
+      filePath?: string;
+    },
+    dbFilename: string = 'pitagger_data.json'
+  ): Promise<void> {
+    try {
+      // Read existing database
+      let database: Record<string, any> = await this.readJsonDatabase(directoryHandle, dbFilename) || {};
+      
+      // Update or add file entry
+      const key = fileData.newFilename || fileData.originalFilename;
+      database[key] = {
+        originalFilename: fileData.originalFilename,
+        newFilename: fileData.newFilename,
+        filePath: fileData.filePath || fileData.originalFilename,
+        metadata: fileData.metadata,
+        updatedAt: new Date().toISOString()
+      };
+      
+      // Save updated database
+      await this.saveJsonDatabase(directoryHandle, database, dbFilename);
+    } catch (error) {
+      console.error('Error updating JSON database:', error);
+      throw error;
+    }
+  }
+
   async updateCsvFile(
     directoryHandle: FileSystemDirectoryHandle,
     filename: string,

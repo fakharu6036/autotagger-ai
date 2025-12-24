@@ -263,6 +263,28 @@ export const generateFilename = (title: string, originalFilename: string): strin
     return `${slug}.${extension}`;
 };
 
+const toCsvField = (v: string) => {
+  const val = v || '';
+  if (val.includes(',') || val.includes('"') || val.includes('\n')) {
+    return `"${val.replace(/"/g, '""')}"`;
+  }
+  return val;
+};
+
+export const generateCsvRow = (item: FileItem, preset: PlatformPreset = PlatformPreset.STANDARD): string => {
+  const filename = item.newFilename || item.fileName || (item.file ? item.file.name : 'unknown');
+  const fn = toCsvField(filename);
+  const title = toCsvField(item.metadata.title);
+  const kws = toCsvField(item.metadata.keywords.join(', '));
+  const cat = toCsvField(item.metadata.category);
+  const rel = toCsvField(item.metadata.releases || '');
+  const desc = toCsvField(item.metadata.description);
+
+  if (preset === PlatformPreset.GETTY) return `${fn},${title},${kws},${desc}`;
+  if (preset === PlatformPreset.ADOBE) return `${fn},${title},${kws},${cat},${rel}`;
+  return `${fn},${title},${kws},${cat},${rel},${desc}`;
+};
+
 export const generateCsvContent = (files: FileItem[], preset: PlatformPreset = PlatformPreset.STANDARD): string => {
   let headers: string[] = [];
   switch(preset) {
@@ -271,29 +293,56 @@ export const generateCsvContent = (files: FileItem[], preset: PlatformPreset = P
     default: headers = ['Filename', 'Title', 'Keywords', 'Category', 'Releases', 'Description'];
   }
   
-  const toCsvField = (v: string) => {
-    const val = v || '';
-    if (val.includes(',') || val.includes('"') || val.includes('\n')) {
-      return `"${val.replace(/"/g, '""')}"`;
-    }
-    return val;
-  };
-
-  const rows = files.map(item => {
-    const filename = item.newFilename || item.fileName || (item.file ? item.file.name : 'unknown');
-    const fn = toCsvField(filename);
-    const title = toCsvField(item.metadata.title);
-    const kws = toCsvField(item.metadata.keywords.join(', '));
-    const cat = toCsvField(item.metadata.category);
-    const rel = toCsvField(item.metadata.releases || '');
-    const desc = toCsvField(item.metadata.description);
-
-    if (preset === PlatformPreset.GETTY) return `${fn},${title},${kws},${desc}`;
-    if (preset === PlatformPreset.ADOBE) return `${fn},${title},${kws},${cat},${rel}`;
-    return `${fn},${title},${kws},${cat},${rel},${desc}`;
-  });
-
+  const rows = files.map(item => generateCsvRow(item, preset));
   return [headers.join(','), ...rows].join('\n');
+};
+
+export const parseCsvContent = (csvContent: string): Map<string, { title: string; keywords: string[]; category: string; description: string }> => {
+  const processed = new Map();
+  const lines = csvContent.split('\n').filter(line => line.trim());
+  
+  if (lines.length < 2) return processed; // Need at least header + 1 row
+  
+  // Skip header line
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line) continue;
+    
+    // Parse CSV line (handle quoted fields)
+    const fields: string[] = [];
+    let currentField = '';
+    let inQuotes = false;
+    
+    for (let j = 0; j < line.length; j++) {
+      const char = line[j];
+      if (char === '"') {
+        if (inQuotes && line[j + 1] === '"') {
+          currentField += '"';
+          j++; // Skip next quote
+        } else {
+          inQuotes = !inQuotes;
+        }
+      } else if (char === ',' && !inQuotes) {
+        fields.push(currentField);
+        currentField = '';
+      } else {
+        currentField += char;
+      }
+    }
+    fields.push(currentField); // Add last field
+    
+    if (fields.length >= 3) {
+      const filename = fields[0].trim();
+      const title = fields[1].trim();
+      const keywords = fields[2].split(',').map(k => k.trim()).filter(Boolean);
+      const category = fields.length > 3 ? fields[3].trim() : '';
+      const description = fields.length > 5 ? fields[5].trim() : '';
+      
+      processed.set(filename, { title, keywords, category, description });
+    }
+  }
+  
+  return processed;
 };
 
 export const downloadCsv = (files: FileItem[], preset: PlatformPreset = PlatformPreset.STANDARD) => {

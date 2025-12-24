@@ -9,7 +9,7 @@ import MetadataSidebar from './components/MetadataSidebar';
 import SettingsModal from './components/SettingsModal';
 import ApiQuotaStatus from './components/ApiQuotaStatus';
 import { FileItem, ProcessingStatus, ApiKeyRecord, PlatformPreset, GenerationProfile, StyleMemory } from './types';
-import { generateId, readFileAsBase64, readFileAsBase64ForAPI, getVideoFrames, downloadCsv, generateFilename, downloadAllFiles, calculateReadinessScore, generateCsvContent } from './services/fileUtils';
+import { generateId, readFileAsBase64, readFileAsBase64ForAPI, getVideoFrames, downloadCsv, generateFilename, downloadAllFiles, calculateReadinessScore, generateCsvContent, generateCsvRow, parseCsvContent } from './services/fileUtils';
 import { geminiService, QuotaExceededInternal } from './services/geminiService';
 import { fileSystemService, FileSystemDirectoryHandle, FileSystemFileHandle } from './services/fileSystemService';
 
@@ -41,6 +41,7 @@ function App() {
   const [folderName, setFolderName] = useState<string | null>(null);
   const [previewLoadProgress, setPreviewLoadProgress] = useState({ loaded: 0, total: 0 });
   const [searchQuery, setSearchQuery] = useState('');
+  const [csvFilename, setCsvFilename] = useState<string>('pitagger_export.csv');
 
   const activeProcessingIds = useRef<Set<string>>(new Set());
   const GEMINI_FREE_TIER_LIMIT = REQUESTS_PER_MINUTE; // Conservative limit to avoid 429 errors
@@ -449,6 +450,19 @@ function App() {
               // Continue even if rename fails
             }
           }
+          
+          // Update CSV file in real-time with the completed file
+          try {
+            const csvRow = generateCsvRow({
+              ...item,
+              newFilename,
+              metadata: { ...metadata, readinessScore }
+            }, PlatformPreset.STANDARD);
+            await fileSystemService.appendToCsvFile(selectedFolder, csvRow, csvFilename);
+          } catch (csvError) {
+            console.error('Error updating CSV file:', csvError);
+            // Continue even if CSV update fails
+          }
         } catch (error) {
           console.error('Error saving metadata file:', error);
         }
@@ -498,19 +512,84 @@ function App() {
       
       setIsProcessingUpload(true);
       
+      // Check for existing CSV file to detect already processed files
+      const existingCsvHandle = await fileSystemService.findExistingCsvFile(folderHandle);
+      let processedFilesMap = new Map<string, { title: string; keywords: string[]; category: string; description: string }>();
+      let csvFileName = 'pitagger_export.csv';
+      
+      if (existingCsvHandle) {
+        try {
+          csvFileName = existingCsvHandle.name;
+          const csvContent = await fileSystemService.readCsvFile(existingCsvHandle);
+          processedFilesMap = parseCsvContent(csvContent);
+          setToast({ message: `Found existing CSV with ${processedFilesMap.size} processed files. Skipping those.`, type: "success" });
+        } catch (e) {
+          console.warn('Error reading existing CSV:', e);
+        }
+      } else {
+        // New folder - create CSV file with headers
+        try {
+          await fileSystemService.createCsvFile(folderHandle, csvFileName);
+          setToast({ message: `Created new CSV file: ${csvFileName}`, type: "success" });
+        } catch (e) {
+          console.warn('Error creating CSV file:', e);
+        }
+      }
+      
+      setCsvFilename(csvFileName);
+      
       // Get all files from folder
       const folderFiles = await fileSystemService.getFilesFromFolder(folderHandle);
       
-      // Create file items immediately - show all files right away
-      const newFiles: FileItem[] = folderFiles.map(({ handle, name, path }) => ({
-        id: generateId(),
-        fileHandle: handle,
-        fileName: name,
-        filePath: path,
-        previewUrl: '', // Will be loaded in parallel
-        status: ProcessingStatus.PENDING,
-        metadata: { title: '', description: '', keywords: [], category: '' },
-        isFromFileSystem: true
+      // Create file items and check if already processed
+      // We'll check both CSV and .pitagger.json files
+      const newFiles: FileItem[] = await Promise.all(folderFiles.map(async ({ handle, name, path }) => {
+        // First check CSV - if filename is in CSV, it's processed
+        let isProcessed = false;
+        let processedMetadata = null;
+        let processedNewFilename = null;
+        
+        if (processedFilesMap.has(name)) {
+          // File is in CSV with current name
+          isProcessed = true;
+          const csvData = processedFilesMap.get(name)!;
+          processedMetadata = {
+            title: csvData.title,
+            description: csvData.description,
+            keywords: csvData.keywords,
+            category: csvData.category,
+            releases: '',
+            backupKeywords: []
+          };
+          processedNewFilename = name;
+        } else {
+          // Check if file has .pitagger.json (backup method)
+          const { isProcessed: hasMetadata, metadata: jsonMetadata } = await fileSystemService.checkIfFileProcessed(folderHandle, path);
+          if (hasMetadata && jsonMetadata) {
+            isProcessed = true;
+            processedMetadata = {
+              title: jsonMetadata.title || '',
+              description: jsonMetadata.description || '',
+              keywords: jsonMetadata.keywords || [],
+              category: jsonMetadata.category || '',
+              releases: jsonMetadata.releases || '',
+              backupKeywords: jsonMetadata.backupKeywords || []
+            };
+            processedNewFilename = jsonMetadata.newFilename || name;
+          }
+        }
+        
+        return {
+          id: generateId(),
+          fileHandle: handle,
+          fileName: name,
+          filePath: path,
+          previewUrl: '', // Will be loaded in parallel
+          status: isProcessed ? ProcessingStatus.COMPLETED : ProcessingStatus.PENDING,
+          metadata: processedMetadata || { title: '', description: '', keywords: [], category: '' },
+          newFilename: processedNewFilename,
+          isFromFileSystem: true
+        };
       }));
       
       // Show all files immediately - no waiting for previews

@@ -66,6 +66,40 @@ export class FileSystemService {
     return files;
   }
 
+  async checkIfFileProcessed(
+    directoryHandle: FileSystemDirectoryHandle,
+    filePath: string
+  ): Promise<{ isProcessed: boolean; metadata: any | null }> {
+    try {
+      const pathParts = filePath.includes('/') ? filePath.split('/') : [filePath];
+      const filename = pathParts[pathParts.length - 1];
+      let targetDir = directoryHandle;
+      
+      // Navigate to subdirectory if needed
+      if (pathParts.length > 1) {
+        const dirPath = pathParts.slice(0, -1);
+        for (const dirName of dirPath) {
+          targetDir = await (targetDir as any).getDirectoryHandle(dirName);
+        }
+      }
+      
+      // Check for .pitagger.json file
+      const metadataFilename = `${filename}.pitagger.json`;
+      try {
+        const metadataHandle = await (targetDir as any).getFileHandle(metadataFilename);
+        const metadataFile = await metadataHandle.getFile();
+        const metadataText = await metadataFile.text();
+        const metadata = JSON.parse(metadataText);
+        return { isProcessed: true, metadata };
+      } catch (e) {
+        // Metadata file doesn't exist
+        return { isProcessed: false, metadata: null };
+      }
+    } catch (error) {
+      return { isProcessed: false, metadata: null };
+    }
+  }
+
   async readFileForPreview(handle: FileSystemFileHandle): Promise<{ file: File; previewUrl: string }> {
     const file = await handle.getFile();
     const previewUrl = file.type.startsWith('image/') 
@@ -158,6 +192,115 @@ export class FileSystemService {
     const writable = await (fileHandle as any).createWritable();
     await writable.write(csvContent);
     await writable.close();
+  }
+
+  async findExistingCsvFile(
+    directoryHandle: FileSystemDirectoryHandle
+  ): Promise<FileSystemFileHandle | null> {
+    try {
+      // Look for pitagger CSV files
+      for await (const entry of directoryHandle.values()) {
+        if (entry.kind === 'file' && entry.name.startsWith('pitagger_') && entry.name.endsWith('.csv')) {
+          return entry as FileSystemFileHandle;
+        }
+      }
+    } catch (e) {
+      console.warn('Error finding CSV file:', e);
+    }
+    return null;
+  }
+
+  async readCsvFile(handle: FileSystemFileHandle): Promise<string> {
+    const file = await handle.getFile();
+    return await file.text();
+  }
+
+  async createCsvFile(
+    directoryHandle: FileSystemDirectoryHandle,
+    filename: string = 'pitagger_export.csv'
+  ): Promise<void> {
+    try {
+      const fileHandle = await (directoryHandle as any).getFileHandle(filename, { create: true });
+      const headers = 'Filename,Title,Keywords,Category,Releases,Description\n';
+      const writable = await (fileHandle as any).createWritable();
+      await writable.write(headers);
+      await writable.close();
+    } catch (error) {
+      console.error('Error creating CSV file:', error);
+      throw error;
+    }
+  }
+
+  async appendToCsvFile(
+    directoryHandle: FileSystemDirectoryHandle,
+    csvRow: string,
+    filename: string = 'pitagger_export.csv'
+  ): Promise<void> {
+    try {
+      let fileHandle: FileSystemFileHandle;
+      let existingContent = '';
+      const newFilename = csvRow.split(',')[0].replace(/^"|"$/g, ''); // Extract filename from CSV row
+      
+      try {
+        // Try to get existing file
+        fileHandle = await (directoryHandle as any).getFileHandle(filename);
+        existingContent = await this.readCsvFile(fileHandle);
+        
+        // Check if this filename already exists in CSV to avoid duplicates
+        const lines = existingContent.split('\n');
+        const existingFilenames = lines.slice(1).map(line => {
+          const firstField = line.split(',')[0];
+          return firstField.replace(/^"|"$/g, '');
+        });
+        
+        if (existingFilenames.includes(newFilename)) {
+          // File already in CSV, update the row instead of appending
+          const updatedLines = lines.map((line, index) => {
+            if (index === 0) return line; // Keep header
+            const firstField = line.split(',')[0].replace(/^"|"$/g, '');
+            return firstField === newFilename ? csvRow : line;
+          });
+          const writable = await (fileHandle as any).createWritable();
+          await writable.write(updatedLines.join('\n') + '\n');
+          await writable.close();
+          return;
+        }
+        
+        // Ensure it ends with newline
+        if (!existingContent.endsWith('\n')) {
+          existingContent += '\n';
+        }
+      } catch (e) {
+        // File doesn't exist, create it with headers
+        fileHandle = await (directoryHandle as any).getFileHandle(filename, { create: true });
+        existingContent = 'Filename,Title,Keywords,Category,Releases,Description\n';
+      }
+      
+      const writable = await (fileHandle as any).createWritable();
+      await writable.write(existingContent + csvRow + '\n');
+      await writable.close();
+    } catch (error) {
+      console.error('Error appending to CSV:', error);
+      throw error;
+    }
+  }
+
+  async updateCsvFile(
+    directoryHandle: FileSystemDirectoryHandle,
+    filename: string,
+    allRows: string[]
+  ): Promise<void> {
+    try {
+      const fileHandle = await (directoryHandle as any).getFileHandle(filename, { create: true });
+      const headers = 'Filename,Title,Keywords,Category,Releases,Description\n';
+      const content = headers + allRows.join('\n') + '\n';
+      const writable = await (fileHandle as any).createWritable();
+      await writable.write(content);
+      await writable.close();
+    } catch (error) {
+      console.error('Error updating CSV:', error);
+      throw error;
+    }
   }
 
   async renameFileInFolder(

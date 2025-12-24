@@ -534,31 +534,49 @@ Return ONLY the JSON object.` }
           
           if (isRateLimit) {
             // Extract retry-after time from error message (e.g., "Please retry in 8.431675204s")
-            let retryAfterSeconds = 10; // Default 10 seconds
+            let retryAfterSeconds = 60; // Default 60 seconds (more conservative)
             const retryMatch = errMsg.match(/retry in ([\d.]+)s/i);
             if (retryMatch && retryMatch[1]) {
-              retryAfterSeconds = Math.ceil(parseFloat(retryMatch[1])) + 2; // Add 2 seconds buffer
+              retryAfterSeconds = Math.ceil(parseFloat(retryMatch[1])) + 5; // Add 5 seconds buffer
+              console.log(`Extracted retry time: ${retryMatch[1]}s, waiting ${retryAfterSeconds}s`);
             }
             
             // Also check Retry-After header if available
             const retryAfterHeader = response.headers.get('Retry-After');
             if (retryAfterHeader) {
-              retryAfterSeconds = Math.max(retryAfterSeconds, parseInt(retryAfterHeader) || 10);
+              const headerSeconds = parseInt(retryAfterHeader) || 60;
+              retryAfterSeconds = Math.max(retryAfterSeconds, headerSeconds);
             }
             
             lastError = { message: errMsg, status: statusCode, statusCode };
-            console.warn(`Model ${modelName} rate limited. Waiting ${retryAfterSeconds}s before trying next model...`);
+            console.warn(`Model ${modelName} rate limited. Waiting ${retryAfterSeconds}s...`);
             
-            // Wait before trying next model to avoid hitting rate limits on all models
-            await new Promise(resolve => setTimeout(resolve, retryAfterSeconds * 1000));
-            
-            // If this is the last model or we've tried too many, throw error
+            // If this is a -lite model and we've hit rate limit, try non-lite models instead
             const modelIndex = modelsToTry.indexOf(model);
-            if (modelIndex >= modelsToTry.length - 1 || modelIndex >= 2) {
-              // Don't try more than 3 models to avoid cascading rate limits
+            const isLiteModel = modelName.includes('-lite');
+            
+            if (isLiteModel && modelIndex < modelsToTry.length - 1) {
+              // Skip remaining -lite models and try non-lite models
+              const remainingModels = modelsToTry.slice(modelIndex + 1).filter(m => !m.includes('-lite'));
+              if (remainingModels.length > 0) {
+                console.warn(`Skipping -lite models due to rate limit. Trying non-lite models: ${remainingModels.join(', ')}`);
+                // Wait a bit before trying non-lite models
+                await new Promise(resolve => setTimeout(resolve, Math.min(retryAfterSeconds, 30) * 1000));
+                // Update modelsToTry to only include non-lite models
+                modelsToTry = remainingModels;
+                continue; // Restart loop with non-lite models
+              }
+            }
+            
+            // If we've tried multiple models or this is the last one, wait full time and throw
+            if (modelIndex >= 2 || modelIndex >= modelsToTry.length - 1) {
+              console.warn(`Multiple models rate limited. Waiting ${retryAfterSeconds}s before giving up...`);
+              await new Promise(resolve => setTimeout(resolve, retryAfterSeconds * 1000));
               throw new QuotaExceededInternal();
             }
             
+            // Wait before trying next model
+            await new Promise(resolve => setTimeout(resolve, retryAfterSeconds * 1000));
             continue; // Try next model after delay
           }
           
@@ -718,24 +736,42 @@ Return ONLY the JSON object.` }
         
         if (isRateLimit) {
           // Extract retry-after time from error message
-          let retryAfterSeconds = 10; // Default 10 seconds
+          let retryAfterSeconds = 60; // Default 60 seconds (more conservative)
           const retryMatch = errMsg.match(/retry in ([\d.]+)s/i);
           if (retryMatch && retryMatch[1]) {
-            retryAfterSeconds = Math.ceil(parseFloat(retryMatch[1])) + 2; // Add 2 seconds buffer
+            retryAfterSeconds = Math.ceil(parseFloat(retryMatch[1])) + 5; // Add 5 seconds buffer
+            console.log(`Extracted retry time: ${retryMatch[1]}s, waiting ${retryAfterSeconds}s`);
           }
           
           lastError = e;
-          console.warn(`Model ${model} rate limited. Waiting ${retryAfterSeconds}s before trying next...`);
+          console.warn(`Model ${model} rate limited. Waiting ${retryAfterSeconds}s...`);
           
-          // Wait before trying next model
-          await new Promise(resolve => setTimeout(resolve, retryAfterSeconds * 1000));
-          
-          // Limit number of model attempts to avoid cascading rate limits
+          // If this is a -lite model, try non-lite models instead
           const modelIndex = modelsToTry.indexOf(model);
-          if (modelIndex >= 2) {
+          const isLiteModel = model.includes('-lite');
+          
+          if (isLiteModel && modelIndex < modelsToTry.length - 1) {
+            // Skip remaining -lite models and try non-lite models
+            const remainingModels = modelsToTry.slice(modelIndex + 1).filter(m => !m.includes('-lite'));
+            if (remainingModels.length > 0) {
+              console.warn(`Skipping -lite models due to rate limit. Trying non-lite models: ${remainingModels.join(', ')}`);
+              // Wait a bit before trying non-lite models
+              await new Promise(resolve => setTimeout(resolve, Math.min(retryAfterSeconds, 30) * 1000));
+              // Update modelsToTry to only include non-lite models
+              modelsToTry = remainingModels;
+              continue; // Restart loop with non-lite models
+            }
+          }
+          
+          // If we've tried multiple models, wait full time and throw
+          if (modelIndex >= 2 || modelIndex >= modelsToTry.length - 1) {
+            console.warn(`Multiple models rate limited. Waiting ${retryAfterSeconds}s before giving up...`);
+            await new Promise(resolve => setTimeout(resolve, retryAfterSeconds * 1000));
             throw new QuotaExceededInternal();
           }
           
+          // Wait before trying next model
+          await new Promise(resolve => setTimeout(resolve, retryAfterSeconds * 1000));
           continue; // Try next model after delay
         }
         

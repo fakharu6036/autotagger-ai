@@ -360,11 +360,13 @@ function App() {
     
     try {
       setProcessingCount(p => p + 1);
-      setFiles(prev => prev.map(f => f.id === item.id ? { ...f, status: ProcessingStatus.PROCESSING } : f));
-      // Update progress
-      const totalPending = files.filter(f => f.status === ProcessingStatus.PENDING || f.status === ProcessingStatus.PROCESSING).length;
-      const completedCount = files.filter(f => f.status === ProcessingStatus.COMPLETED).length;
-      setProcessingProgress({ loaded: completedCount, total: files.length });
+      setFiles(prev => {
+        const updated = prev.map(f => f.id === item.id ? { ...f, status: ProcessingStatus.PROCESSING } : f);
+        // Update progress
+        const completed = updated.filter(f => f.status === ProcessingStatus.COMPLETED).length;
+        setProcessingProgress({ loaded: completed, total: updated.length });
+        return updated;
+      });
       // Auto-select the currently processing file to show in sidebar
       setSidebarFileId(item.id);
 
@@ -502,16 +504,18 @@ function App() {
         }
       }
       
-      setFiles(prev => prev.map(f => f.id === item.id ? { 
-        ...f, 
-        status: ProcessingStatus.COMPLETED, 
-        metadata: { ...metadata, readinessScore },
-        newFilename 
-      } : f));
-      
-      // Update progress
-      const completedCount = files.filter(f => f.status === ProcessingStatus.COMPLETED || f.id === item.id).length;
-      setProcessingProgress({ loaded: completedCount, total: files.length });
+      setFiles(prev => {
+        const updated = prev.map(f => f.id === item.id ? { 
+          ...f, 
+          status: ProcessingStatus.COMPLETED, 
+          metadata: { ...metadata, readinessScore },
+          newFilename 
+        } : f);
+        // Update progress
+        const completed = updated.filter(f => f.status === ProcessingStatus.COMPLETED).length;
+        setProcessingProgress({ loaded: completed, total: updated.length });
+        return updated;
+      });
     } catch (e: any) {
       const isRateLimit = e instanceof QuotaExceededInternal || 
                          (e.message && (e.message.includes('429') || 

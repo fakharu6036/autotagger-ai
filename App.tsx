@@ -650,6 +650,16 @@ function App() {
       
       setCsvFilename(csvFileName);
       
+      // Check for existing JSON database and load it if available
+      try {
+        const jsonDb = await fileSystemService.readJsonDatabase(folderHandle);
+        if (jsonDb) {
+          console.log(`Found existing JSON database with ${Object.keys(jsonDb).length} entries`);
+        }
+      } catch (e) {
+        console.log('No existing JSON database found, will create new one');
+      }
+      
       // Get all files from folder
       const folderFiles = await fileSystemService.getFilesFromFolder(folderHandle);
       

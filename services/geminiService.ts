@@ -320,20 +320,26 @@ Generate comprehensive metadata that maximizes discoverability while maintaining
         const url = new URL(`${API_BASE_URL}/models/${modelName}:generateContent`);
         url.searchParams.set('key', trimmedKey);
         
+        // Try with schema first (for models that support structured output)
+        // If it fails, we'll retry without schema
+        let requestBody: any = {
+          contents: [{
+            parts: promptParts
+          }],
+          generationConfig: {
+            responseMimeType: "application/json"
+          }
+        };
+        
+        // Don't use responseSchema - it's not supported by all models
+        // Instead, rely on the prompt to get JSON response and responseMimeType
+        
         const response = await fetch(url.toString(), {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify({
-            contents: [{
-              parts: promptParts
-            }],
-            generationConfig: {
-              responseMimeType: "application/json",
-              responseSchema: METADATA_SCHEMA
-            }
-          })
+          body: JSON.stringify(requestBody)
         });
 
         if (!response.ok) {
@@ -348,15 +354,71 @@ Generate comprehensive metadata that maximizes discoverability while maintaining
             fullError: errorData
           });
           
-          // Check for fundamental API issues that will affect all models
+          // Check if it's a schema-related error - retry without schema
           const lowerMsg = errMsg.toLowerCase();
-          const isApiKeyIssue = statusCode === 400 && (
+          const isSchemaError = statusCode === 400 && (
+            lowerMsg.includes('responseschema') ||
+            lowerMsg.includes('response_schema') ||
+            lowerMsg.includes('unknown name') ||
+            lowerMsg.includes('cannot find field') ||
+            lowerMsg.includes('generation_config')
+          );
+          
+          if (isSchemaError && requestBody.generationConfig?.responseSchema) {
+            // Retry without schema for this model
+            console.warn(`Model ${modelName} doesn't support responseSchema, retrying without schema...`);
+            const retryBody = {
+              contents: [{
+                parts: promptParts
+              }],
+              generationConfig: {
+                responseMimeType: "application/json"
+                // No responseSchema
+              }
+            };
+            
+            try {
+              const retryResponse = await fetch(url.toString(), {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(retryBody)
+              });
+              
+              if (retryResponse.ok) {
+                // Success without schema - parse JSON from text response
+                const retryData = await retryResponse.json();
+                const jsonStr = retryData.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
+                const json = JSON.parse(jsonStr);
+                const keywords = (json.keywordsWithScores || []).map((k: any) => k.word?.toLowerCase().trim() || k.toLowerCase().trim()).filter(Boolean);
+                const backupKeywords = (json.backupKeywords || []).map((k: string) => k.toLowerCase().trim()).filter(Boolean);
+
+                return {
+                  title: json.title || "Untitled Stock Asset",
+                  description: json.description || "",
+                  keywords: keywords.slice(0, 50),
+                  backupKeywords: backupKeywords,
+                  keywordScores: json.keywordsWithScores || [],
+                  rejectionRisks: json.rejectionRisks || [],
+                  category: json.category || "General",
+                  releases: ""
+                };
+              }
+            } catch (retryError) {
+              console.warn('Retry without schema also failed:', retryError);
+              // Continue with normal error handling below
+            }
+          }
+          
+          // Check for fundamental API issues that will affect all models
+          const isApiKeyIssue = statusCode === 400 && !isSchemaError && (
             lowerMsg.includes('api key') ||
             lowerMsg.includes('invalid api key') ||
             lowerMsg.includes('api key not valid') ||
             lowerMsg.includes('authentication') ||
             lowerMsg.includes('permission denied') ||
-            lowerMsg.includes('invalid') && lowerMsg.includes('key')
+            (lowerMsg.includes('invalid') && lowerMsg.includes('key'))
           );
           
           const isBillingIssue = statusCode === 403 || 

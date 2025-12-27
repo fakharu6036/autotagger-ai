@@ -61,9 +61,10 @@ export const getVideoFrames = (file: File): Promise<{ previewUrl: string, frames
     if (typeof window === 'undefined') return reject('Not in browser');
     
     const video = document.createElement('video');
-    video.preload = 'metadata'; // Changed to metadata for faster initial load
+    video.preload = 'auto'; // Changed to 'auto' to ensure video loads properly
     video.muted = true;
     video.playsInline = true;
+    video.crossOrigin = 'anonymous'; // Help with CORS if needed
     const objectUrl = URL.createObjectURL(file);
     video.src = objectUrl;
 
@@ -90,8 +91,8 @@ export const getVideoFrames = (file: File): Promise<{ previewUrl: string, frames
     };
     
     const proceedCapture = () => {
-      const ctx = canvas.getContext('2d');
-      const apiCtx = apiCanvas.getContext('2d');
+      const ctx = canvas.getContext('2d', { willReadFrequently: false });
+      const apiCtx = apiCanvas.getContext('2d', { willReadFrequently: false });
       
       if (!ctx || !apiCtx) {
         cleanup();
@@ -99,12 +100,26 @@ export const getVideoFrames = (file: File): Promise<{ previewUrl: string, frames
         return;
       }
 
+      // Ensure video has valid dimensions and is ready
+      if (video.videoWidth === 0 || video.videoHeight === 0 || video.readyState < 2) {
+        // Not ready yet, wait a bit more
+        setTimeout(() => {
+          if (!isResolved) {
+            proceedCapture();
+          }
+        }, 100);
+        return;
+      }
+
       // Full size for preview (only capture once)
       if (!previewUrl) {
         canvas.width = video.videoWidth;
         canvas.height = video.videoHeight;
+        
+        // Draw video frame - ensure we're getting the actual rendered frame
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        previewUrl = canvas.toDataURL('image/jpeg', 0.8);
+        
+        previewUrl = canvas.toDataURL('image/jpeg', 0.85);
       }
 
       // Small size (512x512 max) for API to reduce payload
@@ -120,6 +135,8 @@ export const getVideoFrames = (file: File): Promise<{ previewUrl: string, frames
 
       apiCanvas.width = apiWidth;
       apiCanvas.height = apiHeight;
+      
+      // Draw video frame for API
       apiCtx.drawImage(video, 0, 0, apiWidth, apiHeight);
       
       // Low quality for API (0.5) to minimize payload size
@@ -160,12 +177,38 @@ export const getVideoFrames = (file: File): Promise<{ previewUrl: string, frames
       
       video.onseeked = () => {
         if (isResolved) return;
-        // Small delay to ensure frame is decoded, with retry logic
+        // Wait longer to ensure frame is fully decoded and rendered
+        // This is critical to avoid dark/black frames
         let seekRetryCount = 0;
         const tryCapture = () => {
           if (isResolved) return;
-          if (video.readyState >= 2) { // HAVE_CURRENT_DATA
-            captureFrame();
+          
+          // Ensure video has valid dimensions and is ready
+          if (video.readyState >= 2 && video.videoWidth > 0 && video.videoHeight > 0) {
+            // Use requestVideoFrameCallback if available for more reliable frame capture
+            if ('requestVideoFrameCallback' in HTMLVideoElement.prototype) {
+              try {
+                (video as any).requestVideoFrameCallback(() => {
+                  if (!isResolved) {
+                    setTimeout(() => {
+                      if (!isResolved) {
+                        captureFrame();
+                      }
+                    }, 100);
+                  }
+                });
+                return;
+              } catch (e) {
+                // Fall through to regular timeout approach
+              }
+            }
+            
+            // Fallback: Additional delay to ensure frame is rendered (fixes dark frame issue)
+            setTimeout(() => {
+              if (!isResolved) {
+                captureFrame();
+              }
+            }, 400); // Increased to 400ms to ensure frame is fully rendered
           } else {
             seekRetryCount++;
             const maxSeekRetries = fileSizeMB > 100 ? 25 : 15; // More retries for large files
@@ -180,7 +223,8 @@ export const getVideoFrames = (file: File): Promise<{ previewUrl: string, frames
             }
           }
         };
-        const initialDelay = fileSizeMB > 100 ? 500 : 300;
+        // Longer initial delay to ensure video frame is ready
+        const initialDelay = fileSizeMB > 100 ? 800 : 500;
         setTimeout(tryCapture, initialDelay);
       };
       
@@ -197,21 +241,38 @@ export const getVideoFrames = (file: File): Promise<{ previewUrl: string, frames
       const duration = video.duration;
       
       // First, try to capture at current position without seeking (fastest)
+      // But wait a bit to ensure frame is rendered (fixes dark frame issue)
       if (video.readyState >= 2 && video.videoWidth > 0 && video.videoHeight > 0) {
-        // Video is already loaded and has dimensions, try capturing immediately
-        try {
-          captureFrame();
-          return; // Success, exit early
-        } catch (e) {
-          // If immediate capture fails, continue with seeking approach
-        }
+        // Video is already loaded and has dimensions, wait a bit then capture
+        // This ensures the frame is properly rendered and not dark
+        setTimeout(() => {
+          if (!isResolved) {
+            try {
+              captureFrame();
+            } catch (e) {
+              // If immediate capture fails, continue with seeking approach
+              if (!isResolved) {
+                // Continue to seeking approach below
+                const timePoints = [0, duration * 0.1, duration * 0.3];
+                seekAttemptCount = 0;
+                tryCaptureAtTime(timePoints[0]);
+              }
+            }
+          }
+        }, 300); // Wait 300ms to ensure frame is rendered
+        return; // Exit early, capture will happen in setTimeout
       }
       
       // Check if video is valid
       if (!duration || duration === 0 || isNaN(duration)) {
         // If no duration but we have dimensions, try capturing anyway
+        // Wait a bit to ensure frame is rendered
         if (video.readyState >= 2 && video.videoWidth > 0 && video.videoHeight > 0) {
-          captureFrame();
+          setTimeout(() => {
+            if (!isResolved) {
+              captureFrame();
+            }
+          }, 300); // Wait to ensure frame is rendered
           return;
         }
         cleanup();

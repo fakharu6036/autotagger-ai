@@ -114,7 +114,18 @@ def extract_build_and_session_params(html):
     
     return params
 
+# Global session cache
+CACHED_SESSION = None
+CACHE_EXPIRY = 0
+CACHE_DURATION = 600 # 10 minutes
+
 def scrape_fresh_session():
+    global CACHED_SESSION, CACHE_EXPIRY
+    
+    # Return cached session if valid
+    if CACHED_SESSION and time.time() < CACHE_EXPIRY:
+        return CACHED_SESSION
+
     session = requests.Session()
     
     url = 'https://gemini.google.com/app'
@@ -161,6 +172,10 @@ def scrape_fresh_session():
             'reqid': params['reqid'],
             'html': html
         }
+        
+        # Update cache
+        CACHED_SESSION = scraped_data
+        CACHE_EXPIRY = time.time() + CACHE_DURATION
         
         return scraped_data
         
@@ -516,10 +531,15 @@ def chat_with_gemini(prompt, image_base64=None):
         'Cookie': cookie_str
     }
     
+    global CACHED_SESSION
+    
     try:
         response = session.post(url, data=payload, headers=headers, timeout=60)
         
         if response.status_code != 200:
+            # Invalidate cache on error (e.g. 401, 403, 429)
+            print(f"Gemini request failed: {response.status_code}. Invalidating session cache.")
+            CACHED_SESSION = None
             return {
                 'success': False,
                 'error': f'HTTP {response.status_code}'
@@ -543,12 +563,18 @@ def chat_with_gemini(prompt, image_base64=None):
                 }
             }
         else:
+            # Empty response might mean session is stale
+            print("Empty response from Gemini. Invalidating session cache.")
+            CACHED_SESSION = None
             return {
                 'success': False,
                 'error': 'No response received from Gemini'
             }
         
     except requests.exceptions.RequestException as e:
+        # Network error implies we might need a fresh session
+        print(f"Request exception: {e}. Invalidating session cache.")
+        CACHED_SESSION = None
         return {
             'success': False,
             'error': str(e)

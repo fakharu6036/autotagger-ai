@@ -527,7 +527,9 @@ function App() {
         });
         
         // Add delay after successful request to respect rate limits
-        await new Promise(resolve => setTimeout(resolve, MIN_SAFE_INTERVAL_MS));
+        // If using Proxy, use a longer delay (5s) to be "slow" and safe as requested
+        const delay = styleMemory.selectedProvider === AIProvider.LOCAL_PROXY ? 5000 : MIN_SAFE_INTERVAL_MS;
+        await new Promise(resolve => setTimeout(resolve, delay));
       } catch (e: any) {
         const isRateLimit = e instanceof QuotaExceededInternal || 
                            (e.message && (e.message.includes('429') || e.message.toLowerCase().includes('quota') || e.message.toLowerCase().includes('rate limit')));
@@ -1072,7 +1074,9 @@ function App() {
     const tick = setInterval(() => {
       // STRICT CONCURRENCY ENFORCEMENT: Capacity based ONLY on workingApiModels.length
       // BUT: Allow 1 file to process when workingApiModels.length === 0 to discover first API
-      const maxConcurrent = workingApiModels.length === 0 ? 1 : workingApiModels.length;
+      // AND: If using Proxy, STRICTLY limit to 1 concurrent request
+      const isProxy = styleMemory.selectedProvider === AIProvider.LOCAL_PROXY;
+      const maxConcurrent = isProxy ? 1 : (workingApiModels.length === 0 ? 1 : workingApiModels.length);
       
       // Calculate available slots (strict enforcement)
       const availableSlots = maxConcurrent - activeProcessingIds.current.size;

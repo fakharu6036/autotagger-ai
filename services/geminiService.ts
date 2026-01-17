@@ -1,5 +1,5 @@
 
-import { Metadata, GenerationProfile, StyleMemory } from '../types';
+import { Metadata, GenerationProfile, StyleMemory, AIProvider } from '../types';
 
 export class QuotaExceededInternal extends Error {
   constructor() {
@@ -341,6 +341,71 @@ Return ONLY the JSON object.` }
       promptParts.push({ text: "This is a representative frame from a video. Generate comprehensive metadata that covers the entire video content." });
     } else if (data.base64) {
       promptParts.push({ inlineData: { data: data.base64, mimeType: data.mimeType } });
+    }
+
+    // Check for Local Proxy Provider
+    if (styleMemory.selectedProvider === AIProvider.LOCAL_PROXY) {
+      try {
+        // Construct a text-only prompt since proxy doesn't support images yet
+        const textPrompt = `
+${promptParts[0].text}
+
+Note: This request is via proxy. If image data was expected, it is missing.
+Please generate generic metadata suitable for stock photography based on the context provided in the prompt instructions above.
+`;
+        
+        const response = await fetch('/api/ask', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ prompt: textPrompt })
+        });
+
+        if (!response.ok) {
+          throw new Error(`Proxy error: ${response.status} ${response.statusText}`);
+        }
+
+        const data = await response.json();
+        
+        if (!data.success) {
+          throw new Error(data.error || 'Unknown proxy error');
+        }
+
+        // Parse the Markdown/JSON response from the proxy
+        let jsonStr = data.response;
+        jsonStr = this.extractJsonFromResponse(jsonStr);
+        let json: any;
+        
+        try {
+            json = JSON.parse(jsonStr);
+        } catch (e) {
+            console.error("Failed to parse JSON from proxy response", e);
+            throw new Error("Invalid JSON from proxy");
+        }
+
+        // Validate required fields exist
+        // Use default keywords if missing to avoid breaking app
+        const keywords = (json.keywords || []).map((k: any) => {
+          const word = typeof k === 'string' ? k : (k.word || k);
+          return word?.toLowerCase().trim();
+        }).filter(Boolean);
+
+        return {
+          title: json.title || "Untitled via Proxy",
+          description: "",
+          keywords: keywords.slice(0, 50),
+          backupKeywords: [],
+          keywordScores: [],
+          rejectionRisks: [],
+          category: "General",
+          releases: ""
+        };
+
+      } catch (e: any) {
+        console.error("Proxy generation failed:", e);
+        throw e;
+      }
     }
 
     // Try models in order, starting with the one with best free tier access

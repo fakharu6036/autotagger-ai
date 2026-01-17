@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { GenerationProfile, ApiKeyRecord } from '../types';
+import { GenerationProfile, ApiKeyRecord, AIProvider } from '../types';
 import { geminiService } from '../services/geminiService';
 
 interface SettingsModalProps {
@@ -13,6 +13,8 @@ interface SettingsModalProps {
   onUpdateProfilePrompt: (profile: GenerationProfile, prompt: string) => void;
   selectedModel?: string;
   onSelectModel: (model: string) => void;
+  selectedProvider?: AIProvider;
+  onSelectProvider: (provider: AIProvider) => void;
 }
 
 const AVAILABLE_MODELS = [
@@ -34,7 +36,9 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
   customProfilePrompts,
   onUpdateProfilePrompt,
   selectedModel = 'auto',
-  onSelectModel
+  onSelectModel,
+  selectedProvider = AIProvider.LOCAL_PROXY,
+  onSelectProvider
 }) => {
   const [activeTab, setActiveTab] = useState<'keys' | 'profiles' | 'model'>('keys');
   const [newKey, setNewKey] = useState('');
@@ -90,7 +94,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
             onClick={() => setActiveTab('model')}
             className={`pb-3 px-1 mr-8 text-sm font-medium transition-all relative ${activeTab === 'model' ? 'text-brand-600' : 'text-slate-500 hover:text-slate-700'}`}
           >
-            Model
+            AI Provider
             {activeTab === 'model' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-brand-600 rounded-full" />}
           </button>
           <button
@@ -209,6 +213,47 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
             </div>
           ) : activeTab === 'model' ? (
             <div className="space-y-6">
+              
+              <div className="space-y-3">
+                <label className="text-xs font-bold text-slate-400 uppercase tracking-widest ml-1">AI Provider</label>
+                <div className="space-y-2">
+                   {Object.values(AIProvider).map((provider) => (
+                    <label
+                      key={provider}
+                      className={`flex items-start gap-3 p-4 rounded-xl border-2 cursor-pointer transition-all ${
+                        selectedProvider === provider
+                          ? 'border-brand-500 bg-brand-50 dark:bg-brand-900/20'
+                          : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:border-slate-300 dark:hover:border-slate-600'
+                      }`}
+                    >
+                      <input
+                        type="radio"
+                        name="provider"
+                        value={provider}
+                        checked={selectedProvider === provider}
+                        onChange={() => onSelectProvider(provider)}
+                        className="mt-1 h-4 w-4 text-brand-600 focus:ring-brand-500"
+                      />
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="text-sm font-medium text-slate-900 dark:text-slate-100">
+                            {provider}
+                          </span>
+                          {selectedProvider === provider && (
+                            <span className="text-xs px-2 py-0.5 bg-brand-600 text-white rounded-full">Active</span>
+                          )}
+                        </div>
+                        <p className="text-xs text-slate-500 dark:text-slate-400">
+                          {provider === AIProvider.GEMINI 
+                            ? "Use Google's official API. Required: API Key." 
+                            : "Use the built-in Vercel API (serverless python function). Text-only support."}
+                        </p>
+                      </div>
+                    </label>
+                   ))}
+                </div>
+              </div>
+
               <div className="p-5 bg-blue-50 dark:bg-blue-900/20 rounded-2xl border border-blue-100 dark:border-blue-900/20">
                 <div className="flex items-start gap-3">
                   <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-blue-600 dark:text-blue-400 mt-0.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">

@@ -421,7 +421,8 @@ export const downloadCsv = (files: FileItem[], preset: PlatformPreset) => {
 };
 
 export const generateCsvContent = (files: FileItem[], preset: PlatformPreset): string => {
-  const headers = 'Filename,Title,Tags,Suggestions\n';
+  // Adobe Stock format: Filename,Title,Keywords,Category,Releases
+  const headers = 'Filename,Title,Keywords,Category,Releases\n';
   const rows = files
     .filter(f => f.status === ProcessingStatus.COMPLETED && f.metadata)
     .map(f => generateCsvRow(f, preset))
@@ -432,27 +433,44 @@ export const generateCsvContent = (files: FileItem[], preset: PlatformPreset): s
 export const generateCsvRow = (file: FileItem, preset: PlatformPreset): string => {
   const filename = `"${file.newFilename || file.fileName}"`;
   const title = `"${(file.metadata.title || '').replace(/"/g, '""')}"`;
-  const tags = `"${(file.metadata.keywords || []).join(', ')}"`;
-  const suggestions = `"${(file.metadata.backupKeywords || []).join(', ')}"`;
-  return `${filename},${title},${tags},${suggestions}`;
+  const keywords = `"${(file.metadata.keywords || []).join(', ')}"`;
+  const category = `"${(file.metadata.category || '').replace(/"/g, '""')}"`;
+  const releases = `"${(file.metadata.releases || '').replace(/"/g, '""')}"`;
+  
+  return `${filename},${title},${keywords},${category},${releases}`;
 };
 
-export const parseCsvContent = (content: string): Array<{ filename: string; title: string; tags: string; suggestions: string }> => {
+export const parseCsvContent = (content: string): Array<{ filename: string; title: string; keywords: string; category: string; releases: string }> => {
   const lines = content.split('\n').filter(line => line.trim());
   if (lines.length < 2) return [];
   
-  const rows: Array<{ filename: string; title: string; tags: string; suggestions: string }> = [];
+  const rows: Array<{ filename: string; title: string; keywords: string; category: string; releases: string }> = [];
   
   for (let i = 1; i < lines.length; i++) {
     const line = lines[i];
     const fields = parseCsvLine(line);
-    if (fields.length >= 4) {
-      rows.push({
-        filename: fields[0].replace(/^"|"$/g, ''),
-        title: fields[1].replace(/^"|"$/g, ''),
-        tags: fields[2].replace(/^"|"$/g, ''),
-        suggestions: fields[3].replace(/^"|"$/g, '')
-      });
+    // Be flexible with older CSV versions if possible, but prioritize new format
+    if (fields.length >= 3) {
+      if (fields.length >= 5) {
+        // New format: Filename,Title,Keywords,Category,Releases
+        rows.push({
+          filename: fields[0].replace(/^"|"$/g, ''),
+          title: fields[1].replace(/^"|"$/g, ''),
+          keywords: fields[2].replace(/^"|"$/g, ''),
+          category: fields[3].replace(/^"|"$/g, ''),
+          releases: fields[4].replace(/^"|"$/g, '')
+        });
+      } else if (fields.length === 4) {
+         // Old format: Filename,Title,Tags,Suggestions
+         // Map old format to new structure
+         rows.push({
+          filename: fields[0].replace(/^"|"$/g, ''),
+          title: fields[1].replace(/^"|"$/g, ''),
+          keywords: fields[2].replace(/^"|"$/g, ''),
+          category: '', // Missing in old format
+          releases: '' // Missing in old format
+        });
+      }
     }
   }
   

@@ -8,7 +8,7 @@ import BatchActions from './components/BatchActions';
 import MetadataSidebar from './components/MetadataSidebar';
 import SettingsModal from './components/SettingsModal';
 import ApiQuotaStatus from './components/ApiQuotaStatus';
-import { FileItem, ProcessingStatus, ApiKeyRecord, PlatformPreset, GenerationProfile, StyleMemory } from './types';
+import { FileItem, ProcessingStatus, ApiKeyRecord, PlatformPreset, GenerationProfile, StyleMemory, AIProvider } from './types';
 import { generateId, readFileAsBase64, readFileAsBase64ForAPI, getVideoFrames, downloadCsv, generateFilename, downloadAllFiles, calculateReadinessScore, generateCsvContent, generateCsvRow, parseCsvContent } from './services/fileUtils';
 import { geminiService, QuotaExceededInternal } from './services/geminiService';
 import { fileSystemService, FileSystemDirectoryHandle, FileSystemFileHandle } from './services/fileSystemService';
@@ -33,7 +33,8 @@ function App() {
     rejectedKeywords: [], 
     preferredTones: [], 
     lastUsedProfile: GenerationProfile.COMMERCIAL,
-    customProfilePrompts: {} as any
+    customProfilePrompts: {} as any,
+    selectedProvider: AIProvider.LOCAL_PROXY
   });
   const [uploadQueue, setUploadQueue] = useState<File[]>([]);
   const [isProcessingUpload, setIsProcessingUpload] = useState(false);
@@ -776,8 +777,8 @@ function App() {
           // Convert array to Map for compatibility
           processedFilesMap = new Map(parsedCsv.map(row => [row.filename, {
             title: row.title,
-            keywords: row.tags.split(',').map(t => t.trim()).filter(Boolean),
-            category: '',
+            keywords: row.keywords.split(',').map(t => t.trim()).filter(Boolean),
+            category: row.category || '',
             description: ''
           }]));
           setToast({ message: `Found existing CSV with ${processedFilesMap.size} processed files. Skipping those.`, type: "success" });
@@ -1622,6 +1623,8 @@ function App() {
         }}
         selectedModel={styleMemory.selectedModel || 'auto'}
         onSelectModel={(model) => handleUpdateStyleMemory({ selectedModel: model })}
+        selectedProvider={styleMemory.selectedProvider}
+        onSelectProvider={(provider) => handleUpdateStyleMemory({ selectedProvider: provider })}
       />
     </div>
   );

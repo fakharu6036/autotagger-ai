@@ -8,6 +8,7 @@ export enum ProcessingStatus {
 
 export enum AIProvider {
   GEMINI = 'Google Gemini',
+  LOCAL_PROXY = 'Local Python Proxy',
 }
 
 export enum GenerationProfile {
@@ -78,6 +79,7 @@ export interface StyleMemory {
   lastUsedProfile: GenerationProfile;
   customProfilePrompts?: Record<GenerationProfile, string>;
   selectedModel?: string; // User-selected Gemini model
+  selectedProvider?: AIProvider; // User-selected AI provider
 }
 
 export interface FileItem {
